@@ -1,0 +1,6 @@
+[submodule "frankapy"]
+	path = frankapy
+	url = git@github.com:pancake-w/frankapy.git
+[submodule "franka-interface"]
+	path = franka-interface
+	url = git@github.com:pancake-w/franka-interface.git
