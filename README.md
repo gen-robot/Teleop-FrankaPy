@@ -61,4 +61,5 @@ git submodule update --init --recursive # important
 
 5. Please note that if you are using a custom gripper or no gripper, please set the with_gripper=True flag in frankapy/franka_arm.py to False as well as set the with_gripper=1 flag in bash_scripts/start_control_pc.sh to 0.
 
-[API Documentation](https://iamlab-cmu.github.io/frankapy/frankaarm.html#)
+[frankapy API Documentation](https://iamlab-cmu.github.io/frankapy/frankaarm.html#)
+[franka-interface API Documentation](https://iamlab-cmu.github.io/franka-interface/install.html)
