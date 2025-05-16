@@ -1,6 +1,11 @@
 # franka-control Melodic-Noetic
 
 ### Initial preparation
+``` bash
+git checkout melodic-noetic
+git submodule update --init --recursive # important
+```
+
 ``` bash 
 sudo apt install ros-melodic-libfranka ros-melodic-franka-ros ros-melodic-control-msgs # you can change to noetic
 conda create -n franka-melodic python=3.8 -y # 3.8 is ok, and maybe 3.10 is also ok, but we recommend 3.8 for stable
