@@ -12,7 +12,6 @@ conda create -n franka-melodic python=3.8 -y # 3.8 is ok, and maybe 3.10 is also
 conda activate franka-melodic
 pip install colcon-common-extensions  "empy==3.3.4" lark-parser lxml netifaces pyyaml rosdistro vcstool setuptools
 cd frankapy 
-git checkout melodic-noetic
 pip install -e . # you should run this before installing franka-interface
 cd ..
 ```
@@ -20,16 +19,12 @@ cd ..
 ```bash 
 # conda deactivate; conda deactivate # Maybe all colcon build should run without any conda env, including (base) ? 
 cd franka-interface 
-git checkout melodic-noetic
-git submodule update --init --recursive # important
 ```
 `You should follow the instructions` in [README.md](franka-interface/README.md)
 
 ## Install frankapy in command computer [with GPU]
 ```bash 
 cd frankapy
-git checkout melodic-noetic
-git submodule update --init --recursive # important
 ```
 `You should follow the instructions` in [README.md](frankapy/README.md)
 
