@@ -37,6 +37,7 @@ cd frankapy
 2. Open up a new terminal and go to the frankapy directory.
     ```bash
     cd frankapy
+    sudo ufw disable # especially on C19 NUC 
     ```
     1. If you are running franka-interface and frankapy on the same computer, run the following command:
     ```bash 
@@ -50,6 +51,9 @@ cd frankapy
    
 3. Open up a new terminal, enter into the same virtual environment and go to the frankapy directory. Do:
    ```bash
+   # in ROS 1
+   source catkin_ws/devel/setup.bash
+   # in ROS 2
    source ros2_ws/install/setup.bash
    ```
    Be in the same virtualenv or Conda env that FrankaPy was installed in. Place your hand on top of the e-stop. Reset the robot pose with the following command.
