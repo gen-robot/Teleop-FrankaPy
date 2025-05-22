@@ -1,0 +1,3 @@
+[submodule "catkin_ws/src/autolab_core"]
+	path = catkin_ws/src/autolab_core
+	url = https://github.com/BerkeleyAutomation/autolab_core.git

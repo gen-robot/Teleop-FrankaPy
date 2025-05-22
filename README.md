@@ -2,7 +2,6 @@
 
 ### Initial preparation
 ``` bash
-git checkout melodic-noetic
 git submodule update --init --recursive # important
 ```
 
