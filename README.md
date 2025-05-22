@@ -1,15 +1,12 @@
 # franka-control Melodic-Noetic
 
 ### Initial preparation
-``` bash
-git submodule update --init --recursive # important
-```
 
 ``` bash 
 sudo apt install ros-melodic-libfranka ros-melodic-franka-ros ros-melodic-control-msgs # you can change to noetic
 conda create -n franka-melodic python=3.8 -y # 3.8 is ok, and maybe 3.10 is also ok, but we recommend 3.8 for stable
 conda activate franka-melodic
-pip install colcon-common-extensions  "empy==3.3.4" lark-parser lxml netifaces pyyaml rosdistro vcstool setuptools
+pip install colcon-common-extensions "empy==3.3.4" lark-parser lxml netifaces pyyaml rosdistro vcstool setuptools
 cd frankapy 
 pip install -e . # you should run this before installing franka-interface
 cd ..

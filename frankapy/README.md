@@ -57,7 +57,8 @@ See detailed instructions [here](https://github.com/protocolbuffers/protobuf/blo
    conda activate <your-conda-env> # we recommend python=3.8
    pip install -e .
    cd catkin_ws/src/autolab_core
-   pip install .
+   pip install -e .
+   cd -
    ```
    
 4. To compile the catkin_ws use the following script:
