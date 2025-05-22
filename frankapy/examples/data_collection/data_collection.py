@@ -86,12 +86,12 @@ class RealDataCollection:
                 # for space mouse: roll pitch yaw -> For panda: pitch roll yaw (defined by user bingwen)
                 control_xyz = control[:3]
                 control_euler = control[3:6][[1,0,2]] * np.array([-1,-1,1])
-                control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.5)
-                control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.5)
+                control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.35)
+                control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.35)
 
-                delta_xyz = control_xyz * 0.012
+                delta_xyz = control_xyz * 0.015
                 # delta_xyz *= 0
-                delta_euler = control_euler * 0.015 # z, y, x
+                delta_euler = control_euler * 0.025 # z, y, x
                 # delta_euler *= 0
                 delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
 
@@ -230,7 +230,7 @@ def get_arguments():
     parser.add_argument("--dataset_dir", type=str, default="datasets", help="Directory to save dataset.")  # Default to "datasets"
     parser.add_argument("--task_name", type=str, required=True, help="Task name for the dataset.")
     parser.add_argument("--min_action_steps", type=int, default=200, help="Minimum action_steps for data collection.")
-    parser.add_argument("--max_action_steps", type=int, default=200, help="Maximum action_steps for data collection.")
+    parser.add_argument("--max_action_steps", type=int, default=1000, help="Maximum action_steps for data collection.")
     parser.add_argument("--episode_idx", type=int, default=-1, help="Episode index to save data (-1 for auto-increment).")
     parser.add_argument("--instruction", type=str, required=True, help="Instruction for data collection.")
     return parser.parse_args()
@@ -246,7 +246,7 @@ def main():
     robot.reset_joints()
     robot.open_gripper()
     # start a new skill 
-    robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=1000000, skill_desc='MOVE', 
+    robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE', 
                     cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, ignore_virtual_walls = True)
     collection.last_gripper_width = robot.get_gripper_width()
 
