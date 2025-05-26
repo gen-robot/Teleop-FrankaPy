@@ -28,7 +28,7 @@ where:
 control_pc_uname="iam-lab"
 control_pc_use_password=0
 control_pc_password=""
-control_pc_franka_interface_path="projects/franka-control/franka-interface"
+control_pc_franka_interface_path="/home/franka/Documents/Teleop-FrankaPy/franka-interface"
 start_franka_interface=1
 robot_number=1
 robot_ip="172.16.0.12"

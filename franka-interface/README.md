@@ -117,5 +117,3 @@ Do the following if you run run into `libfranka: Cannot load model library: Cann
 mkdir -p /usr/local/lib/cmake/Poco/
 cp cmake/FindPoco.cmake /usr/local/lib/cmake/FindPoco.cmake
 ```
-#### Using conda ROS
-- [2025.5.14] I found robostack doesn't work. However you can try it and use command `source /home/bingwen/miniconda3/envs/<your_env_name>/setup.bash` to source

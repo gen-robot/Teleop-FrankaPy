@@ -13,7 +13,6 @@ cd ..
 ```
 ## Install franka-interface in control computer [local NUC]
 ```bash 
-# conda deactivate; conda deactivate # Maybe all colcon build should run without any conda env, including (base) ? 
 cd franka-interface 
 ```
 `You should follow the instructions` in [README.md](franka-interface/README.md)
@@ -35,6 +34,7 @@ cd frankapy
     cd frankapy
     sudo ufw disable # especially on C19 NUC 
     ```
+    You should modify `control_pc_franka_interface_path` in `./bash_scripts/start_control_pc.sh`, to find the franka-interface.
     1. If you are running franka-interface and frankapy on the same computer, run the following command:
     ```bash 
     bash ./bash_scripts/start_control_pc.sh -i localhost
