@@ -58,6 +58,7 @@ cd frankapy
    python scripts/reset_arm.py
    ```
 4. See example scripts in the examples/ and scripts/ folders to learn how to use the FrankaPy python package.
+   If you want to use `space_mouse to teleop and collect data`, you should follow the [instruction](./frankapy/examples/data_collection/README.md)
 
 5. for data collection, you can read [doc](frankapy/examples/data_collection/README.md)
 

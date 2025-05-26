@@ -97,10 +97,10 @@ got motion event: t(-143, 0, 105) r(-142, -31, -131)
 
 2.  **在新建的 `99-spacemouse.rules` 文件中添加以下内容：**
     ```udev
-    SUBSYSTEM=="usb", ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c62e", MODE="0666"
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c635", MODE="0666"
     ```
     **重要提示：**
-    请将上述规则中的 `256f` (Vendor ID) 和 `c62e` (Product ID) **替换为您自己 SpaceMouse 设备的实际 Vendor ID 和 Product ID**。您可以通过运行 `lsusb` 命令来查找这些 ID。你可以看到类似于 `Bus 003 Device 003: ID 256f:c635 3Dconnexion SpaceMouse Compact` 的信息。If you can not find `3Dconnexion SpaceMouse Compac`, your version of `usb.ids` file is too old, you should use `sudo update -usbids` to update the file. 例如，如果您的设备显示为 `ID 256f:c635`，那么规则应修改为：
+    请将上述规则中的 `256f` (Vendor ID) 和 `c635` (Product ID) **替换为您自己 SpaceMouse 设备的实际 Vendor ID 和 Product ID**。您可以通过运行 `lsusb` 命令来查找这些 ID。你可以看到类似于 `Bus 003 Device 003: ID 256f:c635 3Dconnexion SpaceMouse Compact` 的信息。If you can not find `3Dconnexion SpaceMouse Compac`, your version of `usb.ids` file is too old, you should use `sudo update -usbids` to update the file. 例如，如果您的设备显示为 `ID 256f:c635`，那么规则应修改为：
     ```udev
     SUBSYSTEM=="usb", ATTRS{idVendor}=="256f", ATTRS{idProduct}=="c635", MODE="0666"
     ```

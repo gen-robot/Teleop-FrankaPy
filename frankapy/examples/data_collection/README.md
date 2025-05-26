@@ -14,6 +14,7 @@ pip install -e .
 ```
 
 **space_mouse**
+You should follow the instructions in the [readme](../../drivers/space_mouse/README.MD)
 ```bash 
 cd frankapy/drivers/space_mouse
 pip install -e .
