@@ -26,8 +26,11 @@ class VLADataCollector:
             },
             "action": {
                 "end_effector": {
-                    "orientation": [],
-                    "position": [],
+                    "delta_orientation": [],
+                    "delta_position": [],
+                    "delta_euler": [],
+                    "abs_position": [],
+                    "abs_euler": [],
                     "gripper_width": [],
                 },
                 "joint": {
@@ -96,7 +99,7 @@ class VLADataCollector:
         # if self.cameras is not None:
         #     saving_data["image"] = [Image.fromarray(im).convert("RGB") for im in saving_data["observation"]["rgb"]]
         save_func = np.savez_compressed if is_compressed else np.save
-        np_path_data = os.path.join(save_path, f"data_{episode_idx}")
+        np_path_data = os.path.join(save_path, f"data")
         save_func(np_path_data, saving_data)
         print(f"save data at {np_path_data}.{'npz' if is_compressed else 'npy'}.")
         if is_save_video:
@@ -134,17 +137,20 @@ class VLADataCollector:
         self.data_dict["state"]["end_effector"]["orientation"].append(pose.quaternion)
         self.data_dict["state"]["end_effector"]["gripper_width"].append(gripper_state)
 
-    def update_action(self, xyz, quat, gripper_width):
+    def update_action(self, save_action):
         action = self.data_dict['action']["end_effector"]
-        action["position"].append(xyz)
-        action["orientation"].append(quat)
-        action["gripper_width"].append(gripper_width)
+        action["delta_position"].append(save_action["delta"]["position"])
+        action["delta_orientation"].append(save_action["delta"]["orientation"])
+        action["delta_euler"].append(save_action["delta"]["euler_angle"])
+        action["abs_position"].append(save_action["abs"]["position"])
+        action["abs_euler"].append(save_action["abs"]["euler_angle"])
+        action["gripper_width"].append(save_action["gripper_width"])
 
-    def update_data_dict(self, instruction, xyz, quat, gripper_width, timestamp=None):
+    def update_data_dict(self, instruction, action, timestamp=None):
         self.update_rgb(timestamp)
         self.update_instruction(instruction)
         self.update_state()
-        self.update_action(xyz, quat, gripper_width)
+        self.update_action(action)
 
 
 

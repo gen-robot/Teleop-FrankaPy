@@ -23,49 +23,47 @@ json_numpy.patch()
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--instructions', type=str, default="test")
-    parser.add_argument('--openvla_unnorm_key', type=str, default='default')
+    parser.add_argument('--dataset_dir', type=str, required=True)
     parser.add_argument('--ctrl_freq', type=float, default=5.0)
-    parser.add_argument('--record_dir', type=str, default='logs/openvla')
-    parser.add_argument('--max_steps', type=int, default=1000)
-    parser.add_argument('--vla_server_ip', type=str, default='0.0.0.0', help='The IP address of the VLA server')
-    parser.add_argument('--vla_server_port', type=int, default=9000, help='The port of the VLA server')
     return parser.parse_args()
 
-class OpenVLADeploy:
+class DataRepleyer:
+    """
+    Load dataset from a directory
+    Replay it
+    """
+
     def __init__(self, args):
         self.args = args
-        self.observation_window = deque(maxlen=2)
+        self.dataset_dir = self.args.dataset_dir
+
+        self.data = self.load_data_from_dir(self.dataset_dir)
+
+        self.ctrl_freq = args.ctrl_freq
+
+        self.last_close = -1
 
         # Interfaces
         self.robot = FrankaArm()
         self.camera = RealsenseAPI()
 
-        # Record settings
-        self.record_dir = args.record_dir
-        os.makedirs(self.record_dir, exist_ok=True)
-
-        self.init_xyz = None
-        self.init_rotation = None
-        self.command_xyz = None
-        self.command_rotation = None
-
-        self.max_steps = args.max_steps
-        self.ctrl_freq = args.ctrl_freq
-        self.act_url = f"http://{args.vla_server_ip}:{args.vla_server_port}/act"
         self.init_time = rospy.Time.now().to_time()
+    
+    def data_structure_check(self, data):
+        for key, item in data.items():
+            if isinstance(item, dict):
+                print(key, ":")
+                self.data_structure_check(item)
+            elif isinstance(item, np.ndarray):
+                print(key, ":", item.shape)
+            else:
+                print(key, ":", item)
 
-    # maybe can be used for aligning with training
-    def _jpeg_mapping(self, img):
-        img = cv2.imencode('.jpg', img)[1].tobytes()
-        return cv2.imdecode(np.frombuffer(img, np.uint8), cv2.IMREAD_COLOR)
+    def load_data_from_dir(self, dataset_dir):
+        data = np.load(os.path.join(dataset_dir, "data.npy"), allow_pickle=True).item()
+        self.data_structure_check(data)
 
-    def update_observation_window(self):
-        image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
-        self.observation_window.append({
-            'instruction': self.args.instructions,
-            'image': image
-        })
+        return data
 
     def ee_pose_init(self):
         time.sleep(0.5)
@@ -83,31 +81,40 @@ class OpenVLADeploy:
         self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE', 
                         cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, ignore_virtual_walls = True)
 
-    def run_inference_loop(self):
+    def replay_action(self):
+        position_sequence = self.data["action"]["end_effector"]["delta_position"]
+        rotation_sequence = self.data["action"]["end_effector"]["delta_euler"]
+        gripper_width_sequence = self.data["action"]["end_effector"]["gripper_width"]
+
         step = 0
         self.ee_pose_init()
         control_rate = rospy.Rate(self.ctrl_freq)
-        print("[INFO] Starting inference loop...")
-        while step < self.max_steps:
-            self.update_observation_window()
-            observation = self.observation_window[-1]
+        print(f"[INFO] Starting replay data with {position_sequence.shape[0]} steps...")
 
-            # request and inference
-            t1 = time.time()
-            action = requests.post(
-                self.act_url,
-                json={
-                    "image": observation['image'].as_type(np.uint8), 
-                    "instruction": observation['instruction'],
-                    }
-            ).json()
-            action = np.array(action)
-            # # we recommend xyz is limited in range [0.001, 0.1], 0.005 is best for high frequency control
-            # action = np.array([0.000, 0.015, 0.000, 0.0, 0.0, 0.0, 0])
-            print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
+        replay_step = position_sequence.shape[0]
+
+        for i in range(replay_step):
+            pos = position_sequence[i]
+            rot = rotation_sequence[i]
+            gripper_width = gripper_width_sequence[i]
+            action = np.array([
+                pos[0], pos[1], pos[2],
+                rot[0], rot[1], rot[2],
+                gripper_width
+            ])
 
             timestamp = rospy.Time.now().to_time()-self.init_time
             delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
+
+            # if gripper < 0.5:
+            #     if self.last_close == -1:
+            #         self.last_close = 3
+            #     elif self.last_close > 0:
+            #         self.last_close -= 1
+                
+            #     if self.last_close == 0:
+            #         gripper = 1
+
             delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
             # Compute target pose
             self.command_xyz += delta_xyz
@@ -152,24 +159,13 @@ class OpenVLADeploy:
 
         self.robot.stop_skill()
         rospy.loginfo('Done')
-        print("[INFO] Reaching Max-steps, Inference loop finished.")
+        print("[INFO] Replay end.")
 
 def main():
     args = parse_arguments()
-    timestamp = time.strftime("OpenVLA-%Y-%m-%d-%H-%M-%S")
-    args.record_dir = os.path.join(args.record_dir, timestamp)
-    os.makedirs(args.record_dir, exist_ok=True)
+    data_replayer = DataRepleyer(args)
+    data_replayer.robot_init()
+    data_replayer.replay_action()
 
-    # Save arguments and git commit
-    with open(os.path.join(args.record_dir, 'args.json'), 'w') as f:
-        json.dump(vars(args), f, indent=4)
-    os.system(f'git rev-parse HEAD > {os.path.join(args.record_dir, "git_commit.txt")}')
-
-    agent = OpenVLADeploy(args)
-    agent.robot_init()
-    agent.run_inference_loop()
-
-if __name__ == '__main__':
+if __name__=="__main__":
     main()
-
-

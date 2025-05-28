@@ -12,7 +12,7 @@ from autolab_core import RigidTransform
 from frankapy import FrankaArm, SensorDataMessageType
 from frankapy.franka_constants import FrankaConstants as FC
 from examples.data_collection.vla_data_collector import VLADataCollector
-from transforms3d.euler import euler2quat, euler2mat, euler2quat
+from transforms3d.euler import euler2quat, euler2mat, mat2euler
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import PosePositionSensorMessage, CartesianImpedanceSensorMessage
 import rospy
@@ -102,12 +102,27 @@ class RealDataCollection:
                 # self.command_rotation = np.matmul(u, vh)
 
                 timestamp = rospy.Time.now().to_time()-self.init_time
+
+                save_action = {
+                    "delta": {
+                        "position": delta_xyz,
+                        "orientation": euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
+                        "euler_angle": delta_euler,
+                    },
+                    "abs": {
+                        "position": self.command_xyz,
+                        "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
+                    },
+                    "gripper_width": control_gripper
+                }
+
                 # Collect data
                 self.data_collector.update_data_dict(
                     instruction=self.instruction,
-                    xyz=delta_xyz,
-                    quat=euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
-                    gripper_width=control_gripper,
+                    action=save_action,
+                    # xyz=delta_xyz,
+                    # quat=euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
+                    # gripper_width=control_gripper,
                     timestamp=timestamp,
                 )
 
