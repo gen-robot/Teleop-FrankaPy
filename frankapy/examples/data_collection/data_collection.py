@@ -32,7 +32,7 @@ class RealDataCollection:
         self.action_steps = 0
         self.instruction = args.instruction
         self.init_xyz = None
-        self.init_quat = None # [x,y,z,w]
+        self.init_rotation = None
         self.command_xyz = None
         self.command_rotation = None
         self.control_frequency = 20
@@ -150,6 +150,7 @@ class RealDataCollection:
                 control_rate.sleep()
                 # time.sleep(self.control_time_step)
                 self.ee_pose_init()
+                continue
                 # break
 
     def get_next_episode_idx(self, task_dir):
