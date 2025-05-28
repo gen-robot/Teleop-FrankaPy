@@ -23,16 +23,13 @@ json_numpy.patch()
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--instructions', type=str, required=True)
+    parser.add_argument('--instructions', type=str, default="test")
     parser.add_argument('--openvla_unnorm_key', type=str, default='default')
-    parser.add_argument('--ip_address', type=str, default='localhost')
-    parser.add_argument('--ctrl_freq', type=float, default=5.0)
+    parser.add_argument('--ctrl_freq', type=float, default=1.0)
     parser.add_argument('--record_dir', type=str, default='logs/openvla')
-    parser.add_argument('--use_target_delta', action='store_true', help='Use target delta from observation or not')
     parser.add_argument('--max_steps', type=int, default=1000)
     parser.add_argument('--vla_server_ip', type=str, default='0.0.0.0', help='The IP address of the VLA server')
     parser.add_argument('--vla_server_port', type=int, default=9000, help='The port of the VLA server')
-    parser.set_defaults(use_target_delta=True)
     return parser.parse_args()
 
 class OpenVLADeploy:
@@ -105,6 +102,8 @@ class OpenVLADeploy:
                     }
             ).json()
             action = np.array(action)
+            # # we recommend xyz is limited in range [0.001, 0.1], 0.005 is best for high frequency control
+            # action = np.array([0.000, 0.015, 0.000, 0.0, 0.0, 0.0, 0])
             print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
 
             timestamp = rospy.Time.now().to_time()-self.init_time
