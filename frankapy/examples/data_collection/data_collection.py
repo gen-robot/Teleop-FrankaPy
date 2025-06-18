@@ -16,6 +16,7 @@ from transforms3d.euler import euler2quat, euler2mat, mat2euler
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import PosePositionSensorMessage, CartesianImpedanceSensorMessage
 import rospy
+import copy
 
 class RealDataCollection:
     def __init__(self, args, robot: FrankaArm, cameras: RealsenseAPI, use_space_mouse: bool=False):
@@ -35,7 +36,7 @@ class RealDataCollection:
         self.init_rotation = None
         self.command_xyz = None
         self.command_rotation = None
-        self.control_frequency = 20
+        self.control_frequency = 5
         self.control_time_step = 1.0/self.control_frequency
         self.last_gripper_width = None
         self.init_time = rospy.Time.now().to_time()
@@ -110,7 +111,7 @@ class RealDataCollection:
                         "euler_angle": delta_euler,
                     },
                     "abs": {
-                        "position": self.command_xyz,
+                        "position": copy.deepcopy(self.command_xyz),
                         "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
                     },
                     "gripper_width": control_gripper

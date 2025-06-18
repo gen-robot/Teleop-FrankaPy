@@ -20,13 +20,17 @@ class FrankaConstants:
     # buffer time
     DEFAULT_TERM_BUFFER_TIME = 0.2
 
-    HOME_JOINTS = [0, -math.pi / 4, 0, -3 * math.pi / 4, 0, math.pi / 2, math.pi / 4]
+    # HOME_JOINTS = [0, -math.pi / 4, 0, -3 * math.pi / 4, 0, math.pi / 2, math.pi / 4]
     HOME_POSE = RigidTransform(rotation=np.array([
             [1, 0, 0],
             [0, -1, 0],
             [0, 0, -1],
         ]), translation=np.array([0.3069, 0, 0.4867]),
         from_frame='franka_tool', to_frame='world')
+
+    HOME_JOINTS = [0, 0.259, 0, -2.289, 0, 2.515, math.pi / 4]
+    # HOME_JOINTS = [0.1, 0.2, 0.3, -2.4, 0.9, 2.8, math.pi / 2]
+
     READY_JOINTS = [0, -math.pi/4, 0, -2.85496998, 0, 2.09382820,  math.pi/4]
     READY_POSE = RigidTransform(rotation=np.array([
             [1, 0, 0],

@@ -27,9 +27,9 @@ def parse_arguments():
     parser.add_argument('--openvla_unnorm_key', type=str, default='default')
     parser.add_argument('--ctrl_freq', type=float, default=5.0)
     parser.add_argument('--record_dir', type=str, default='logs/openvla')
-    parser.add_argument('--max_steps', type=int, default=1000)
-    parser.add_argument('--vla_server_ip', type=str, default='0.0.0.0', help='The IP address of the VLA server')
-    parser.add_argument('--vla_server_port', type=int, default=9000, help='The port of the VLA server')
+    parser.add_argument('--max_steps', type=int, default=500)
+    parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
+    parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
     return parser.parse_args()
 
 class OpenVLADeploy:
@@ -49,6 +49,7 @@ class OpenVLADeploy:
         self.init_rotation = None
         self.command_xyz = None
         self.command_rotation = None
+        self.actions_list = []
 
         self.max_steps = args.max_steps
         self.ctrl_freq = args.ctrl_freq
@@ -61,10 +62,11 @@ class OpenVLADeploy:
         return cv2.imdecode(np.frombuffer(img, np.uint8), cv2.IMREAD_COLOR)
 
     def update_observation_window(self):
-        image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
+        images = self.camera.get_rgb()
+        # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
         self.observation_window.append({
             'instruction': self.args.instructions,
-            'image': image
+            'images': images # support multi camera
         })
 
     def ee_pose_init(self):
@@ -88,67 +90,80 @@ class OpenVLADeploy:
         self.ee_pose_init()
         control_rate = rospy.Rate(self.ctrl_freq)
         print("[INFO] Starting inference loop...")
-        while step < self.max_steps:
-            self.update_observation_window()
-            observation = self.observation_window[-1]
+        try:
+            while step < self.max_steps:
+                self.update_observation_window()
+                observation = self.observation_window[-1]
 
-            # request and inference
-            t1 = time.time()
-            action = requests.post(
-                self.act_url,
-                json={
-                    "image": observation['image'].as_type(np.uint8), 
-                    "instruction": observation['instruction'],
-                    }
-            ).json()
-            action = np.array(action)
-            # # we recommend xyz is limited in range [0.001, 0.1], 0.005 is best for high frequency control
-            # action = np.array([0.000, 0.015, 0.000, 0.0, 0.0, 0.0, 0])
-            print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
+                if len(self.actions_list) == 0:
+                    # request and inference
+                    t1 = time.time()
+                    action = requests.post(
+                        self.act_url,
+                        json={
+                            "images": observation['images'].astype(np.uint8), 
+                            "instruction": observation['instruction'],
+                            }
+                    ).json()
+                    action = np.array(action)
+                    if len(action.shape) == 1:
+                        self.actions_list.append(action)
+                    else:
+                        for idx in range(action.shape[0]):
+                            self.actions_list.append(action[idx])
+                
+                action = self.actions_list.pop(0)
+                # # we recommend xyz is limited in range [0.001, 0.1], 0.005 is best for high frequency control
+                # action = np.array([0.000, 0.015, 0.000, 0.0, 0.0, 0.0, 0])
+                print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
 
-            timestamp = rospy.Time.now().to_time()-self.init_time
-            delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
-            delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
-            # Compute target pose
-            self.command_xyz += delta_xyz
-            self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
-            try:
-                self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
-                gripper_width = FC.GRIPPER_WIDTH_MAX * gripper
+                timestamp = rospy.Time.now().to_time()-self.init_time
+                delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
+                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
+                # Compute target pose
+                self.command_xyz += delta_xyz
+                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+                try:
+                    self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
+                    gripper_width = FC.GRIPPER_WIDTH_MAX * gripper
 
-                # ros data send and control
-                pub_traj_gen_proto_msg = PosePositionSensorMessage(
-                    id=step+1, timestamp=timestamp, 
-                    position=self.command_transform.translation, quaternion=self.command_transform.quaternion
-                )
-                fb_ctrlr_proto = CartesianImpedanceSensorMessage(
-                    id=step+1, timestamp=timestamp,
-                    translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
-                    rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
-                )
-                ros_pub_sensor_msg = make_sensor_group_msg(
-                    trajectory_generator_sensor_msg=sensor_proto2ros_msg(
-                        pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
-                    feedback_controller_sensor_msg=sensor_proto2ros_msg(
-                        fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
-                )
-                # rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
-                self.robot.publish_sensor_values(ros_pub_sensor_msg)
+                    # ros data send and control
+                    pub_traj_gen_proto_msg = PosePositionSensorMessage(
+                        id=step+1, timestamp=timestamp, 
+                        position=self.command_transform.translation, quaternion=self.command_transform.quaternion
+                    )
+                    fb_ctrlr_proto = CartesianImpedanceSensorMessage(
+                        id=step+1, timestamp=timestamp,
+                        translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
+                        rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
+                    )
+                    ros_pub_sensor_msg = make_sensor_group_msg(
+                        trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+                            pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
+                        feedback_controller_sensor_msg=sensor_proto2ros_msg(
+                            fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
+                    )
+                    # rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
+                    self.robot.publish_sensor_values(ros_pub_sensor_msg)
 
-                current_gripper_width = self.robot.get_gripper_width()
-                if abs(gripper_width - current_gripper_width) > 0.01:
-                    grasp = True if gripper<0.5 else False
-                    self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
+                    current_gripper_width = self.robot.get_gripper_width()
+                    if abs(gripper_width - current_gripper_width) > 0.01:
+                        grasp = True if gripper<0.5 else False
+                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
 
-            except Exception as e:
-                self.ee_pose_init()
+                except Exception as e:
+                    self.ee_pose_init()
+                    control_rate.sleep()
+                    print(f"[WARN] Move failed? : {e}")
+                    continue
+
+                print(f"[STEP {step}] delta_xyz: {delta_xyz}, delta_euler: {delta_euler}, gripper: {gripper}")
+                step += 1
                 control_rate.sleep()
-                print(f"[WARN] Move failed? : {e}")
-                continue
-
-            print(f"[STEP {step}] delta_xyz: {delta_xyz}, delta_euler: {delta_euler}, gripper: {gripper}")
-            step += 1
+        except Exception as e:
+            self.ee_pose_init()
             control_rate.sleep()
+            print(f"[WARN] Keyboard Interp : {e}")
 
         self.robot.stop_skill()
         rospy.loginfo('Done')

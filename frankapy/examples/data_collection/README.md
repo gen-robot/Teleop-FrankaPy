@@ -24,3 +24,7 @@ pip install -e .
 ```bash 
 python -m examples.data_collection.data_collection --min_action_steps 200 --max_action_steps 1000 --instruction test --task_name bingwen # --episode_idx 1
 ```
+
+### Note
+
+The `control_frequency` should not set too high. We found a delay between camera return and control actions when `control_frequency=20`, it could be solved when `control_frequency` set to be 5.

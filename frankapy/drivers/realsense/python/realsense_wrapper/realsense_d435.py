@@ -97,6 +97,8 @@ class RealsenseAPI:
             color_frame = frameset.get_color_frame()
             rgb[i, :, :, :] = np.asanyarray(color_frame.get_data())
 
+        print("check:", rgb.shape)
+
         return rgb
 
     def get_depth(self):
