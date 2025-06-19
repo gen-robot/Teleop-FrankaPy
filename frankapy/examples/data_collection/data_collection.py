@@ -36,7 +36,7 @@ class RealDataCollection:
         self.init_rotation = None
         self.command_xyz = None
         self.command_rotation = None
-        self.control_frequency = 5
+        self.control_frequency = 10
         self.control_time_step = 1.0/self.control_frequency
         self.last_gripper_width = None
         self.init_time = rospy.Time.now().to_time()
@@ -86,6 +86,9 @@ class RealDataCollection:
 
                 # for space mouse: roll pitch yaw -> For panda: pitch roll yaw (defined by user bingwen)
                 control_xyz = control[:3]
+                if self.args.user_frame:
+                    control_xyz[:2] *= -1
+                
                 control_euler = control[3:6][[1,0,2]] * np.array([-1,-1,1])
                 control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.35)
                 control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.35)
@@ -250,6 +253,7 @@ def get_arguments():
     parser.add_argument("--max_action_steps", type=int, default=1000, help="Maximum action_steps for data collection.")
     parser.add_argument("--episode_idx", type=int, default=-1, help="Episode index to save data (-1 for auto-increment).")
     parser.add_argument("--instruction", type=str, required=True, help="Instruction for data collection.")
+    parser.add_argument("--user_frame", default=False, action="store_true")
     return parser.parse_args()
 
 
