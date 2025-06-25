@@ -36,7 +36,7 @@ class RealDataCollection:
         self.init_rotation = None
         self.command_xyz = None
         self.command_rotation = None
-        self.control_frequency = 10
+        self.control_frequency = 5
         self.control_time_step = 1.0/self.control_frequency
         self.last_gripper_width = None
         self.init_time = rospy.Time.now().to_time()
