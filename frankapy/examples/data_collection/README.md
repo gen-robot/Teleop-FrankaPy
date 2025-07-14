@@ -22,7 +22,7 @@ pip install -e .
 
 ### Use this command for data collection
 ```bash 
-python -m examples.data_collection.data_collection --min_action_steps 200 --max_action_steps 1000 --instruction test --task_name bingwen # --episode_idx 1
+python -m examples.data_collection.data_collection --min_action_steps 50 --max_action_steps 1000 --instruction test --task_name bingwen  --episode_idx 1
 ```
 
 ### Note
