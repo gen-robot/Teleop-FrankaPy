@@ -25,13 +25,13 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--instructions', type=str, default="test")
     parser.add_argument('--ctrl_freq', type=float, default=5.0)
-    parser.add_argument('--record_dir', type=str, default='logs/openvla')
+    parser.add_argument('--record_dir', type=str, default='logs/openpi')
     parser.add_argument('--max_steps', type=int, default=500)
     parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
     parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
     return parser.parse_args()
 
-class OpenVLADeploy:
+class OpenPiDeploy:
     def __init__(self, args):
         self.args = args
         self.observation_window = deque(maxlen=2)
@@ -64,6 +64,8 @@ class OpenVLADeploy:
         images = self.camera.get_rgb()
         # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
         self.observation_window.append({
+            'joint_state': self.robot.get_joints(),
+            'gripper_width': self.robot.get_gripper_width(),
             'instruction': self.args.instructions,
             'images': images # support multi camera
         })
@@ -100,6 +102,8 @@ class OpenVLADeploy:
                     action = requests.post(
                         self.act_url,
                         json={
+                            "joint_state": observation['joint_state'],
+                            "gripper_width": observation['gripper_width'],
                             "images": observation['images'].astype(np.uint8), 
                             "instruction": observation['instruction'],
                             }
@@ -143,12 +147,13 @@ class OpenVLADeploy:
                             fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
                     )
                     # rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
-                    self.robot.publish_sensor_values(ros_pub_sensor_msg)
+                    # self.robot.publish_sensor_values(ros_pub_sensor_msg) # not move 
 
                     current_gripper_width = self.robot.get_gripper_width()
                     if abs(gripper_width - current_gripper_width) > 0.01:
                         grasp = True if gripper<0.5 else False
-                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
+                        # not move 
+                        # self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
 
                 except Exception as e:
                     self.ee_pose_init()
@@ -170,7 +175,7 @@ class OpenVLADeploy:
 
 def main():
     args = parse_arguments()
-    timestamp = time.strftime("OpenVLA-%Y-%m-%d-%H-%M-%S")
+    timestamp = time.strftime("OpenPi-%Y-%m-%d-%H-%M-%S")
     args.record_dir = os.path.join(args.record_dir, timestamp)
     os.makedirs(args.record_dir, exist_ok=True)
 
@@ -179,7 +184,7 @@ def main():
         json.dump(vars(args), f, indent=4)
     os.system(f'git rev-parse HEAD > {os.path.join(args.record_dir, "git_commit.txt")}')
 
-    agent = OpenVLADeploy(args)
+    agent = OpenPiDeploy(args)
     agent.robot_init()
     agent.run_inference_loop()
 
