@@ -11,6 +11,19 @@ The server will recive images and language instruction from client, and it shoul
 
 By runing:
 
+#### option 1:
+
 ```bash
 python examples/openvla_deploy/query_server.py --vla_server_ip xx.xx.xx.xx
+```
+
+#### option 2:
+
+You should run `ssh wuqiong3 -L 9876:localhost:9876` to start the terminal, and then keep the terminal open, then you can use the local port(9876) to link the remote server(wuqiong3:9876).
+
+`ssh <remote_host_ssh_config> -L <local_port>:<destination_host_ip>:<destination_port>`
+
+```bash
+ssh wuqiong3 -L 9876:localhost:9876
+python deploy/query_vla.py --vla_server_ip "localhost" --vla_server_port 9876
 ```

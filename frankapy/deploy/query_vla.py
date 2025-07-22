@@ -31,7 +31,7 @@ def parse_arguments():
     parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
     return parser.parse_args()
 
-class OpenPiDeploy:
+class VLADeploy:
     def __init__(self, args):
         self.args = args
         self.observation_window = deque(maxlen=2)
@@ -190,7 +190,7 @@ def main():
         json.dump(vars(args), f, indent=4)
     os.system(f'git rev-parse HEAD > {os.path.join(args.record_dir, "git_commit.txt")}')
 
-    agent = OpenPiDeploy(args)
+    agent = VLADeploy(args)
     agent.robot_init()
     agent.run_inference_loop()
 
