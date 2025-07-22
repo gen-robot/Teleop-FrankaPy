@@ -64,10 +64,11 @@ class OpenPiDeploy:
         images = self.camera.get_rgb()
         # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
         self.observation_window.append({
-            'joint_state': self.robot.get_joints(),
-            'gripper_width': self.robot.get_gripper_width(),
-            'instruction': self.args.instructions,
-            'images': images # support multi camera
+            'ee_pose_T': self.robot.get_pose().matrix, # np shape (4,4)
+            'joints': self.robot.get_joints(), # np shape (7,)
+            'gripper_width': np.array([self.robot.get_gripper_width()]), # np shape(1,)
+            'instruction': self.args.instructions, # string
+            'images': images.astype(np.uint8) # support multi camera
         })
 
     def ee_pose_init(self):
@@ -102,13 +103,14 @@ class OpenPiDeploy:
                     action = requests.post(
                         self.act_url,
                         json={
-                            "joint_state": observation['joint_state'],
+                            "ee_pose_T": observation['ee_pose_T'],
+                            "joints": observation['joints'],
                             "gripper_width": observation['gripper_width'],
-                            "images": observation['images'].astype(np.uint8), 
+                            "images": observation['images'], 
                             "instruction": observation['instruction'],
                             }
                     ).json()
-                    action = np.array(action)
+                    action = np.array(action['actions'])
                     if len(action.shape) == 1:
                         self.actions_list.append(action)
                     else:
@@ -156,6 +158,10 @@ class OpenPiDeploy:
                         # self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
 
                 except Exception as e:
+                    if e is KeyboardInterrupt:
+                        self.robot.stop_skill()
+                        print(f"[WARN] Keyboard Interp : {e}")
+                        break
                     self.ee_pose_init()
                     control_rate.sleep()
                     print(f"[WARN] Move failed? : {e}")
@@ -165,7 +171,7 @@ class OpenPiDeploy:
                 step += 1
                 control_rate.sleep()
         except Exception as e:
-            self.ee_pose_init()
+            self.robot.stop_skill()
             control_rate.sleep()
             print(f"[WARN] Keyboard Interp : {e}")
 
