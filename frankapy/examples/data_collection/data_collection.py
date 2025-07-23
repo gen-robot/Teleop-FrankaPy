@@ -41,6 +41,9 @@ class RealDataCollection:
         self.last_gripper_width = None
         self.init_time = rospy.Time.now().to_time()
 
+        self.pos_scale = args.pos_scale
+        self.rot_scale = args.rot_scale
+
     def ee_pose_init(self):
         time.sleep(0.5)
         pose = self.robot.get_pose()
@@ -93,9 +96,9 @@ class RealDataCollection:
                 control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.35)
                 control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.35)
 
-                delta_xyz = control_xyz * 0.015
+                delta_xyz = control_xyz * self.pos_scale
                 # delta_xyz *= 0
-                delta_euler = control_euler * 0.025 # z, y, x
+                delta_euler = control_euler * self.rot_scale # z, y, x
                 # delta_euler *= 0
                 delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
 
@@ -254,6 +257,8 @@ def get_arguments():
     parser.add_argument("--episode_idx", type=int, default=-1, help="Episode index to save data (-1 for auto-increment).")
     parser.add_argument("--instruction", type=str, required=True, help="Instruction for data collection.")
     parser.add_argument("--user_frame", default=False, action="store_true")
+    parser.add_argument("--pos_scale", default=0.015, type=float, description="The scale of xyz action")
+    parser.add_argument("--rot_scale", default=0.025, type=float, description="The scale of rotation action")
     return parser.parse_args()
 
 

@@ -9,6 +9,8 @@ The server will recive images and language instruction from client, and it shoul
 
 ### How to create a client
 
+See `query_server.py`. This client will load images, robot states from franka robot. And send to the server in other computer to get actions.
+
 By runing:
 
 #### option 1:

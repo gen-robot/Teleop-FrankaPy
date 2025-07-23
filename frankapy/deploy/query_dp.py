@@ -63,13 +63,12 @@ class DiffusionPolicyDeploy:
         
         # Get gripper state
         gripper_width = self.robot.get_gripper_width()
-        gripper_state = gripper_width / FC.GRIPPER_WIDTH_MAX  # Normalize to [0, 1]
         
         # Combine into 8D state: [pos(3), quat(4), gripper(1)]
         robot_state = np.concatenate([
             position,
             quaternion,
-            [gripper_state]
+            [gripper_width]
         ]).astype(np.float32)
         
         return robot_state
