@@ -250,15 +250,15 @@ class RealDataCollection:
 
 def get_arguments():
     parser = argparse.ArgumentParser(description="Data collection script.")
-    parser.add_argument("--dataset_dir", type=str, default="datasets", help="Directory to save dataset.")  # Default to "datasets"
+    parser.add_argument("--dataset_dir", type=str, default="datasets/yukun/", help="Directory to save dataset.")  # Default to "datasets"
     parser.add_argument("--task_name", type=str, required=True, help="Task name for the dataset.")
     parser.add_argument("--min_action_steps", type=int, default=200, help="Minimum action_steps for data collection.")
     parser.add_argument("--max_action_steps", type=int, default=1000, help="Maximum action_steps for data collection.")
     parser.add_argument("--episode_idx", type=int, default=-1, help="Episode index to save data (-1 for auto-increment).")
     parser.add_argument("--instruction", type=str, required=True, help="Instruction for data collection.")
     parser.add_argument("--user_frame", default=False, action="store_true")
-    parser.add_argument("--pos_scale", default=0.015, type=float, description="The scale of xyz action")
-    parser.add_argument("--rot_scale", default=0.025, type=float, description="The scale of rotation action")
+    parser.add_argument("--pos_scale", default=0.02, type=float, help="The scale of xyz action")
+    parser.add_argument("--rot_scale", default=0.08, type=float, help="The scale of rotation action")
     return parser.parse_args()
 
 
