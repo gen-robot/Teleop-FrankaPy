@@ -91,6 +91,7 @@ class OpenVLADeploy:
         self.ee_pose_init()
         control_rate = rospy.Rate(self.ctrl_freq)
         print("[INFO] Starting inference loop...")
+        rgb_array = []
         try:
             while step < self.max_steps:
                 self.update_observation_window()
@@ -108,6 +109,7 @@ class OpenVLADeploy:
                             "tcp_pose": np.concatenate([tcp_pose.translation, tcp_pose.quaternion]).astype(np.float32)
                             }
                     ).json()
+                    rgb_array.append(observation['images'].astype(np.uint8))
                     action = np.array(action)
                     if len(action.shape) == 1:
                         self.actions_list.append(action)
@@ -167,6 +169,34 @@ class OpenVLADeploy:
             self.ee_pose_init()
             control_rate.sleep()
             print(f"[WARN] Keyboard Interp : {e}")
+        
+        # save the rgb images as a video
+        base_path = "../render/"
+        num_folder = len(os.listdir(base_path))
+        base_path = os.path.join(base_path, f"video_{num_folder}")
+        os.makedirs(base_path, exist_ok=True)
+        
+        if isinstance(rgb_array, list):
+            rgb_array = np.stack(rgb_array, axis=0)
+
+        if rgb_array.ndim != 5 or rgb_array.shape[-1] != 3:
+            raise ValueError("rgb_array must be shape [frame_num, cam_num, H, W, 3]")
+        
+        frame_num, cam_num, H, W, _ = rgb_array.shape
+
+        for cam_idx in range(cam_num):
+            video_filename = os.path.join(base_path, f"cam_{cam_idx}.mp4")
+
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # or 'avc1', 'H264'
+            out = cv2.VideoWriter(video_filename, fourcc, fps, (W, H))
+
+            for frame_idx in range(frame_num):
+                frame = rgb_array[frame_idx, cam_idx]  # [H, W, 3]
+                frame_bgr = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+                out.write(frame_bgr)
+
+            out.release()
+            print(f"Saved camera {cam_idx} video to: {video_filename}")
 
         self.robot.stop_skill()
         rospy.loginfo('Done')
