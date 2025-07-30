@@ -148,7 +148,7 @@ class OpenVLADeploy:
                     current_gripper_width = self.robot.get_gripper_width()
                     if abs(gripper_width - current_gripper_width) > 0.01:
                         grasp = True if gripper<0.5 else False
-                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
+                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=True, skill_desc="control_gripper")
 
                 except Exception as e:
                     self.ee_pose_init()

@@ -257,8 +257,8 @@ def get_arguments():
     parser.add_argument("--episode_idx", type=int, default=-1, help="Episode index to save data (-1 for auto-increment).")
     parser.add_argument("--instruction", type=str, required=True, help="Instruction for data collection.")
     parser.add_argument("--user_frame", default=False, action="store_true")
-    parser.add_argument("--pos_scale", default=0.015, type=float, description="The scale of xyz action")
-    parser.add_argument("--rot_scale", default=0.025, type=float, description="The scale of rotation action")
+    parser.add_argument("--pos_scale", default=0.02, type=float, help="The scale of xyz action")
+    parser.add_argument("--rot_scale", default=0.08, type=float, help="The scale of rotation action")
     return parser.parse_args()
 
 
