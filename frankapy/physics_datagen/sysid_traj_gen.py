@@ -15,7 +15,7 @@ from frankapy import FrankaConstants as FC
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
 
-from utils import get_traj, plot_save_trajectory
+from utils import get_traj, plot_trajectory
 from robot_constants import TEST_RANGE, REAL_K_GAINS, REAL_D_GAINS, INIT_GOAL_POSE, REAL_FRANKA_JOINT_LIMITS
 
 @dataclass
@@ -222,7 +222,7 @@ class RealtimeSysIdController:
                 # if not i == len(goal_pos_list)-1: # @bingwen to fix.
                 #     goal_positions.append(goal_pos)
                 goal_positions.append(goal_pos)
-                actual_positions.append(current_joints[joint_idx])
+                actual_positions.append(current_joints)
                 actual_vels.append(signed_current_vel) # maybe can get from frankapy
                 t_history.append(time.time() - start_time)
 
@@ -239,13 +239,20 @@ class RealtimeSysIdController:
             rospy.loginfo("trajectory execution completed.")
             rospy.sleep(1.0)
 
+            # save data to csv, save all joints
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'Goal Position': np.array(goal_positions),
+                'Goal Position': np.array(action),
                 'Actual Position': np.array(actual_positions),
                 'Actual Velocity': np.array(actual_vels),
             })
-            plot_save_trajectory(joint_idx, df, t_history, actual_positions, goal_positions, actual_vels, trajectory_type, output, show_plot)
+            data_filename = f"joint:{joint_idx}_trajType:{trajectory_type}.csv"
+            os.makedirs(output, exist_ok=True)
+            df.to_csv(os.path.join(output, data_filename), index=False)
+            print(f"Data saved to {data_filename}")
+
+            # plot the trajectory
+            plot_trajectory(joint_idx, t_history, actual_positions, goal_positions, actual_vels, trajectory_type, output, show_plot)
             print(f"Time taken: {time.time() - start_time}s")
 
         except KeyboardInterrupt:

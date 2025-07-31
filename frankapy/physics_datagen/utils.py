@@ -42,7 +42,7 @@ def plt_sim_real_comparison(sim_time,
     with open(json_filename, "w") as json_file:
         json.dump(data, json_file, indent=4)
 
-def plot_save_trajectory(joint_idx, df, t_history, actual_position, goal_position, actual_vel, trajectory_type, output, show_plot):
+def plot_trajectory(joint_idx, t_history, actual_position, goal_position, actual_vel, trajectory_type, output, show_plot):
         # if show_plot:
         #     plt.ion()
         if trajectory_type != None:
@@ -67,13 +67,8 @@ def plot_save_trajectory(joint_idx, df, t_history, actual_position, goal_positio
 
         data_file_root = output
         os.makedirs(data_file_root, exist_ok=True)
-
-        data_filename = f"joint:{joint_idx}_trajType:{trajectory_type}.csv"
         image_filename = f'joint:{joint_idx}_trajType:{trajectory_type}.png'
-        df.to_csv(os.path.join(data_file_root, data_filename), index=False)
         fig.savefig(os.path.join(data_file_root, image_filename))
-
-        print(f"Data saved to {data_filename}")
         print(f"Image saved to {image_filename}")
 
 
