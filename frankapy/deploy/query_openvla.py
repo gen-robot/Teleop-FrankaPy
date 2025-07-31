@@ -29,6 +29,7 @@ def parse_arguments():
     parser.add_argument('--max_steps', type=int, default=500)
     parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
     parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
+    parser.add_argument('--use_abs', type=bool, default=False, action='store_true', help='Use absolute position and orientation instead of deltas')
     return parser.parse_args()
 
 class OpenVLADeploy:
@@ -49,6 +50,7 @@ class OpenVLADeploy:
         self.command_xyz = None
         self.command_rotation = None
         self.actions_list = []
+        self.use_abs = args.use_abs
 
         self.max_steps = args.max_steps
         self.ctrl_freq = args.ctrl_freq
@@ -117,11 +119,19 @@ class OpenVLADeploy:
                 print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
 
                 timestamp = rospy.Time.now().to_time()-self.init_time
-                delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
-                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
-                # Compute target pose
-                self.command_xyz += delta_xyz
-                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+                if not self.use_abs:
+                    delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
+                    delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
+                    # Compute target pose
+                    self.command_xyz += delta_xyz
+                    self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+                else:
+                    abs_xyz, abs_euler, gripper = action[:3], action[3:6], action[-1]
+                    abs_rotation = euler2mat(abs_euler[0], abs_euler[1], abs_euler[2],'sxyz')
+                    # Compute target pose
+                    self.command_xyz = abs_xyz
+                    self.command_rotation = abs_rotation
+                
                 try:
                     self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
                     gripper_width = FC.GRIPPER_WIDTH_MAX * gripper
