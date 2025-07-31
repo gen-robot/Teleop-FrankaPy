@@ -18,6 +18,8 @@ from frankapy.proto import PosePositionSensorMessage, CartesianImpedanceSensorMe
 import rospy
 import copy
 
+#usage: python -m examples.data_collection.data_collection --min_action_steps 45 --max_action_steps 1000 
+# --instruction pick_cucumber --task_name pick_cucumber --pos_scale 0.02 --rot_scale 0.1 --episode_idx -1
 class RealDataCollection:
     def __init__(self, args, robot: FrankaArm, cameras: RealsenseAPI, use_space_mouse: bool=False):
         self.robot: FrankaArm = robot
