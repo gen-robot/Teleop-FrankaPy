@@ -221,7 +221,7 @@ class RealtimeSysIdController:
                 signed_current_vel = 0
                 # if not i == len(goal_pos_list)-1: # @bingwen to fix.
                 #     goal_positions.append(goal_pos)
-                goal_positions.append(goal_pos)
+                goal_positions.append(action)
                 actual_positions.append(current_joints)
                 actual_vels.append(signed_current_vel) # maybe can get from frankapy
                 t_history.append(time.time() - start_time)
@@ -242,7 +242,7 @@ class RealtimeSysIdController:
             # save data to csv, save all joints
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'Goal Position': np.array(action),
+                'Goal Position': np.array(goal_positions),
                 'Actual Position': np.array(actual_positions),
                 'Actual Velocity': np.array(actual_vels),
             })
