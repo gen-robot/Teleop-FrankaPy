@@ -13,6 +13,7 @@ from pathlib import Path
 from collections import deque
 from PIL import Image as PImage
 from transforms3d.euler import euler2quat, euler2mat, quat2euler
+from transforms3d.quaternions import quat2mat
 from autolab_core import RigidTransform
 from frankapy import FrankaArm, SensorDataMessageType
 from realsense_wrapper.realsense_d435 import RealsenseAPI
@@ -26,15 +27,15 @@ def parse_arguments():
     parser.add_argument('--instructions', type=str, default="test")
     parser.add_argument('--ctrl_freq', type=float, default=5.0)
     parser.add_argument('--record_dir', type=str, default='logs/openpi')
-    parser.add_argument('--max_steps', type=int, default=500)
+    parser.add_argument('--max_steps', type=int, default=1000)
     parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
-    parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
+    parser.add_argument('--vla_server_port', type=int, default=5003, help='The port of the VLA server')
     return parser.parse_args()
 
 class VLADeploy:
     """
-    different from query_vla.py, this script is used to deploy VLA/affordance models with RGBD images
-    obsevervation_window: add RGBD images
+    different from query_vla.py, this script is used to deploy VLA/affordance models with RGBD input
+    obsevervation_window: change RGB to RGBD images
     action: absolute action in the form of [x, y, z, roll, pitch, yaw, gripper]
     """
     def __init__(self, args):
@@ -43,7 +44,7 @@ class VLADeploy:
 
         # Interfaces
         self.robot = FrankaArm()
-        self.camera = RealsenseAPI()
+        self.camera = RealsenseAPI(height=720, width=1280)
 
         # Record settings
         self.record_dir = args.record_dir
@@ -66,14 +67,13 @@ class VLADeploy:
         return cv2.imdecode(np.frombuffer(img, np.uint8), cv2.IMREAD_COLOR)
 
     def update_observation_window(self):
-        images = self.camera.get_rgbd()
-        # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
+        images = self.camera.get_rgbd() # np shape (1, 480, 640, 4)
         self.observation_window.append({
             'ee_pose_T': self.robot.get_pose().matrix, # np shape (4,4)
             'joints': self.robot.get_joints(), # np shape (7,)
             'gripper_width': np.array([self.robot.get_gripper_width()]), # np shape(1,)
             'instruction': self.args.instructions, # string
-            'images': images.astype(np.uint8) # support multi camera
+            'images': images.astype(np.float32) # support multi camera
         })
 
     def ee_pose_init(self):
@@ -102,6 +102,12 @@ class VLADeploy:
                 self.update_observation_window()
                 observation = self.observation_window[-1]
 
+                # print("=== [DEBUG] Incoming Payload ===")
+                # print("instruction:", observation['instruction'], type(observation['instruction'])) # str
+                # print("ee_pose_T:", type(observation['ee_pose_T']), np.array(observation['ee_pose_T']).shape) # <class 'numpy.ndarray'> (4, 4)
+                # print("joints:", type(observation['joints']), np.array(observation['joints']).shape) # <class 'numpy.ndarray'> (7,)
+                # print("images:", type(observation['images']), np.array(observation['images']).shape) # <class 'numpy.ndarray'> (1, 480, 640, 4)
+            
                 if len(self.actions_list) == 0:
                     # request and inference
                     t1 = time.time()
@@ -115,7 +121,7 @@ class VLADeploy:
                             "instruction": observation['instruction'],
                             }
                     ).json()
-                    action = np.array(action['actions'])
+                    action = np.array(action)
                     if len(action.shape) == 1:
                         self.actions_list.append(action)
                     else:
@@ -126,8 +132,10 @@ class VLADeploy:
                 print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
                 timestamp = rospy.Time.now().to_time()-self.init_time
                 # Compute target pose (need to check)
-                self.command_xyz = action[:3]
-                self.command_rotation = action[3:6]
+                x, y, z, qx, qy, qz, qw = action
+                quat = [qw, qx, qy, qz]
+                self.command_xyz = np.array([x, y, z])
+                self.command_rotation = quat2mat(quat)
 
                 try:
                     self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
@@ -168,10 +176,10 @@ def main():
     os.system(f'git rev-parse HEAD > {os.path.join(args.record_dir, "git_commit.txt")}')
 
     agent = VLADeploy(args)
-    agent.robot_init()
+    # agent.robot_init() # always connect with the object
     agent.run_inference_loop()
 
 if __name__ == '__main__':
-    main()
+    main() # run python scripts/GFlow/query_vla_rgbd.py --vla_server_ip 192.168.50.217
 
 
