@@ -29,7 +29,7 @@ def parse_arguments():
     parser.add_argument('--max_steps', type=int, default=500)
     parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
     parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
-    parser.add_argument('--use_abs', type=bool, default=False, action='store_true', help='Use absolute position and orientation instead of deltas')
+    parser.add_argument('--use_abs', default=False, action='store_true', help='Use absolute position and orientation instead of deltas')
     return parser.parse_args()
 
 class OpenVLADeploy:
