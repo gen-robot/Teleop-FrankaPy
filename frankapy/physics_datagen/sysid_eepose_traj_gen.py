@@ -244,6 +244,7 @@ class RealtimeEEPoseSysIdController:
 
             # Convert initial pose to vector for trajectory generation
             init_pose_vector = self.pose_to_vector(init_pose)
+            init_joint_state = self.real_arm.get_joints()
 
             ''' -------------------------------------- CONTROL LOOP -------------------------------------- '''
             
@@ -293,8 +294,9 @@ class RealtimeEEPoseSysIdController:
             axis_names = ['x', 'y', 'z', 'rx', 'ry', 'rz']
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'Goal Pose': np.array(goal_poses).tolist(),
-                'Actual Pose': np.array(actual_poses).tolist(),
+                'Init qpos': np.array(init_joint_state).tolist(),
+                'Goal Position': np.array(goal_poses).tolist(),
+                'Actual Position': np.array(actual_poses).tolist(),
                 'Actual Velocity': np.array(actual_vels),
             })
             filename = f"ee_pose_axis:{axis_names[axis_idx]}_trajType:{trajectory_type}"
