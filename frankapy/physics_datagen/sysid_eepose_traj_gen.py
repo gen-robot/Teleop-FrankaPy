@@ -294,10 +294,10 @@ class RealtimeEEPoseSysIdController:
             axis_names = ['x', 'y', 'z', 'rx', 'ry', 'rz']
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'Init qpos': np.array(init_joint_state).tolist(),
-                'Goal Position': np.array(goal_poses).tolist(),
-                'Actual Position': np.array(actual_poses).tolist(),
-                'Actual Velocity': np.array(actual_vels),
+                'init_qpos': np.array(init_joint_state).tolist(),
+                'goal_position': np.array(goal_poses).tolist(),
+                'actual_position': np.array(actual_poses).tolist(),
+                'actual_velocity': np.array(actual_vels),
             })
             filename = f"ee_pose_axis:{axis_names[axis_idx]}_trajType:{trajectory_type}"
             data_filename = f"{filename}.csv"

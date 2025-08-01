@@ -242,10 +242,10 @@ class RealtimeJointSysIdController:
             # save data to csv, save all joints
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'Init qpos': np.array(init_joint_state).tolist(),
-                'Goal Position': np.array(goal_positions).tolist(),
-                'Actual Position': np.array(actual_positions).tolist(),
-                'Actual Velocity': np.array(actual_vels),
+                'init_qpos': np.array(init_joint_state).tolist(),
+                'goal_position': np.array(goal_positions).tolist(),
+                'actual_position': np.array(actual_positions).tolist(),
+                'actual_velocity': np.array(actual_vels),
             })
             filename = f"joint:{joint_idx}_trajType:{trajectory_type}"
             data_filename = f"{filename}.csv"
