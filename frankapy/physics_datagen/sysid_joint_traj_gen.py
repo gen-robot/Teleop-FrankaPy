@@ -16,7 +16,7 @@ from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
 
 from utils import get_traj, plot_trajectory
-from robot_constants import TEST_RANGE, REAL_K_GAINS, REAL_D_GAINS, INIT_GOAL_POSE, REAL_FRANKA_JOINT_LIMITS
+from robot_constants import TEST_JOINT_RANGE, REAL_K_GAINS, REAL_D_GAINS, INIT_GOAL_POSE, REAL_FRANKA_JOINT_LIMITS
 
 @dataclass
 class Args:
@@ -37,7 +37,7 @@ class Args:
     output: str = "csv/"
     """The directory path for output data and parameters."""
 
-class RealtimeSysIdController:
+class RealtimeJointSysIdController:
     def __init__(self, state_update_freq=100, ctrl_freq=10):
         self.real_arm = FrankaArm('realtime_sysid_controller')
         
@@ -108,8 +108,8 @@ class RealtimeSysIdController:
         self.o3d_vis.remove_geometry(self.ee_frame)
 
     def _read_robot_limits(self):
-        self.MIN_POS = np.array(TEST_RANGE["lower"])
-        self.MAX_POS = np.array(TEST_RANGE["upper"])
+        self.MIN_POS = np.array(TEST_JOINT_RANGE["lower"])
+        self.MAX_POS = np.array(TEST_JOINT_RANGE["upper"])
 
         cprint(f"MIN_POS: {self.MIN_POS}", "light_cyan", "on_blue")
         cprint(f"MAX_POS: {self.MAX_POS}", "light_cyan", "on_blue")
@@ -242,17 +242,18 @@ class RealtimeSysIdController:
             # save data to csv, save all joints
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'Goal Position': np.array(goal_positions),
-                'Actual Position': np.array(actual_positions),
+                'Goal Position': np.array(goal_positions).tolist(),
+                'Actual Position': np.array(actual_positions).tolist(),
                 'Actual Velocity': np.array(actual_vels),
             })
-            data_filename = f"joint:{joint_idx}_trajType:{trajectory_type}.csv"
+            filename = f"joint:{joint_idx}_trajType:{trajectory_type}"
+            data_filename = f"{filename}.csv"
             os.makedirs(output, exist_ok=True)
             df.to_csv(os.path.join(output, data_filename), index=False)
             print(f"Data saved to {data_filename}")
 
             # plot the trajectory
-            plot_trajectory(joint_idx, t_history, actual_positions, goal_positions, actual_vels, trajectory_type, output, show_plot)
+            plot_trajectory(t_history, actual_positions, goal_positions, actual_vels, filename, output, show_plot)
             print(f"Time taken: {time.time() - start_time}s")
 
         except KeyboardInterrupt:
@@ -278,7 +279,7 @@ def main(args: Args):
     with open(os.path.join(args.output, "real_joints_param.json"), "w") as f:
         json.dump(param, f, indent=4)
 
-    controller = RealtimeSysIdController(ctrl_freq=args.ctrl_freq)
+    controller = RealtimeJointSysIdController(ctrl_freq=args.ctrl_freq)
     controller.run_trajectory_experiment(
         trajectory_type=args.trajectory_type,
         joint_idx=args.joint_idx,

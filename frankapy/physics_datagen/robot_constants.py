@@ -63,7 +63,13 @@ REAL_FRANKA_JOINT_LIMITS = {
 }
 
 # test joint range @bingwen to check 
-TEST_RANGE = {
+TEST_JOINT_RANGE = {
+    "lower": [-0.5, -0.8, -0.5, -2.5, -0.5, 1.7, -0.5,  0.0100,  0.0100],
+    "upper": [ 0.5,  0.05,  0.5, -1.5,  0.5,  2.5,  1.5,  0.0400,  0.0400]
+}
+
+# test end effector range @bingwen to check
+TEST_EE_RANGE = {
     "lower": [-0.5, -0.8, -0.5, -2.5, -0.5, 1.7, -0.5,  0.0100,  0.0100],
     "upper": [ 0.5,  0.05,  0.5, -1.5,  0.5,  2.5,  1.5,  0.0400,  0.0400]
 }
