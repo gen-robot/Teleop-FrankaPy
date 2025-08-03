@@ -20,6 +20,8 @@ class RealsenseAPI:
         print(f"Connecting to RealSense cameras ({len(self.device_ls)} found) ...")
         self.pipes = []
         self.profiles = OrderedDict()
+        self.sensors = OrderedDict()  # Store sensors for parameter control
+        
         for i, device_id in enumerate(self.device_ls):
             pipe = rs.pipeline()
             config = rs.config()
@@ -31,7 +33,17 @@ class RealsenseAPI:
             )
 
             self.pipes.append(pipe)
-            self.profiles[device_id]=pipe.start(config)
+            self.profiles[device_id] = pipe.start(config)
+            
+            # Get device and sensors for parameter control
+            device = rs.context().query_devices()[i]
+            color_sensor = device.first_color_sensor()
+            depth_sensor = device.first_depth_sensor()
+            self.sensors[device_id] = {
+                'color': color_sensor,
+                'depth': depth_sensor,
+                'device': device
+            }
 
             print(f"Connected to camera {i+1} ({device_id}).")
 
@@ -85,7 +97,6 @@ class RealsenseAPI:
 
         return rgbd
 
-
     def get_rgb(self):
         """Returns a numpy array of [n_cams, height, width, RGB]"""
         framesets = self._get_frames()
@@ -96,8 +107,6 @@ class RealsenseAPI:
         for i, frameset in enumerate(framesets):
             color_frame = frameset.get_color_frame()
             rgb[i, :, :, :] = np.asanyarray(color_frame.get_data())
-
-        # print("check:", rgb.shape)
 
         return rgb
 
@@ -114,12 +123,170 @@ class RealsenseAPI:
 
         return depth
 
+    def get_key_camera_params(self, device_index=0):
+        """Get key camera parameters for filename generation."""
+        try:
+            device_id = self.device_ls[device_index]
+            color_sensor = self.sensors[device_id]['color']
+            depth_sensor = self.sensors[device_id]['depth']
+            
+            params = {}
+            
+            # Color sensor parameters
+            try:
+                if color_sensor.supports(rs.option.exposure):
+                    params['exp'] = int(color_sensor.get_option(rs.option.exposure))
+                if color_sensor.supports(rs.option.gain):
+                    params['gain'] = int(color_sensor.get_option(rs.option.gain))
+                if color_sensor.supports(rs.option.white_balance):
+                    params['wb'] = int(color_sensor.get_option(rs.option.white_balance))
+                if color_sensor.supports(rs.option.enable_auto_exposure):
+                    params['auto_exp'] = int(color_sensor.get_option(rs.option.enable_auto_exposure))
+            except Exception:
+                pass
+            
+            # Depth sensor parameters
+            try:
+                if depth_sensor.supports(rs.option.laser_power):
+                    params['laser'] = int(depth_sensor.get_option(rs.option.laser_power))
+            except Exception:
+                pass
+            
+            return params
+            
+        except Exception as e:
+            print(f"Failed to get camera parameters for camera {device_index+1}: {e}")
+            return {}
+
+    def get_all_cameras_params(self):
+        """Get key parameters for all cameras."""
+        all_params = {}
+        for i in range(self.get_num_cameras()):
+            all_params[f'cam{i+1}'] = self.get_key_camera_params(i)
+        return all_params
+
+    # New camera parameter control methods
+    def set_exposure(self, device_index=0, exposure_value=None):
+        """Set exposure for color sensor. If None, enables auto exposure."""
+        try:
+            device_id = self.device_ls[device_index]
+            color_sensor = self.sensors[device_id]['color']
+            
+            if exposure_value is None:
+                # Enable auto exposure
+                color_sensor.set_option(rs.option.enable_auto_exposure, 1)
+                print(f"Camera {device_index+1}: Auto exposure enabled")
+            else:
+                # Disable auto exposure and set manual value
+                color_sensor.set_option(rs.option.enable_auto_exposure, 0)
+                color_sensor.set_option(rs.option.exposure, exposure_value)
+                print(f"Camera {device_index+1}: Manual exposure set to {exposure_value}")
+        except Exception as e:
+            print(f"Failed to set exposure for camera {device_index+1}: {e}")
+
+    def set_gain(self, device_index=0, gain_value=None):
+        """Set gain for color sensor. If None, enables auto gain."""
+        try:
+            device_id = self.device_ls[device_index]
+            color_sensor = self.sensors[device_id]['color']
+            
+            if gain_value is None:
+                # Enable auto gain
+                color_sensor.set_option(rs.option.enable_auto_exposure, 1)
+                print(f"Camera {device_index+1}: Auto gain enabled")
+            else:
+                # Set manual gain
+                color_sensor.set_option(rs.option.gain, gain_value)
+                print(f"Camera {device_index+1}: Gain set to {gain_value}")
+        except Exception as e:
+            print(f"Failed to set gain for camera {device_index+1}: {e}")
+
+    def set_laser_power(self, device_index=0, power_value=150):
+        """Set laser power for depth sensor (0-360)."""
+        try:
+            device_id = self.device_ls[device_index]
+            depth_sensor = self.sensors[device_id]['depth']
+            
+            depth_sensor.set_option(rs.option.laser_power, power_value)
+            print(f"Camera {device_index+1}: Laser power set to {power_value}")
+        except Exception as e:
+            print(f"Failed to set laser power for camera {device_index+1}: {e}")
+
+    def set_white_balance(self, device_index=0, wb_value=None):
+        """Set white balance for color sensor. If None, enables auto white balance."""
+        try:
+            device_id = self.device_ls[device_index]
+            color_sensor = self.sensors[device_id]['color']
+            
+            if wb_value is None:
+                # Enable auto white balance
+                color_sensor.set_option(rs.option.enable_auto_white_balance, 1)
+                print(f"Camera {device_index+1}: Auto white balance enabled")
+            else:
+                # Disable auto and set manual value
+                color_sensor.set_option(rs.option.enable_auto_white_balance, 0)
+                color_sensor.set_option(rs.option.white_balance, wb_value)
+                print(f"Camera {device_index+1}: White balance set to {wb_value}")
+        except Exception as e:
+            print(f"Failed to set white balance for camera {device_index+1}: {e}")
+
+    def get_camera_options(self, device_index=0):
+        """Get available options and their current values for a camera."""
+        try:
+            device_id = self.device_ls[device_index]
+            sensors = self.sensors[device_id]
+            
+            options_info = {}
+            for sensor_type, sensor in sensors.items():
+                if sensor_type == 'device':
+                    continue
+                    
+                options_info[sensor_type] = {}
+                for option in rs.option:
+                    try:
+                        if sensor.supports(option):
+                            current_value = sensor.get_option(option)
+                            option_range = sensor.get_option_range(option)
+                            options_info[sensor_type][option.name] = {
+                                'current': current_value,
+                                'min': option_range.min,
+                                'max': option_range.max,
+                                'step': option_range.step,
+                                'default': option_range.default
+                            }
+                    except Exception:
+                        continue
+            
+            return options_info
+        except Exception as e:
+            print(f"Failed to get options for camera {device_index+1}: {e}")
+            return {}
+
+    def close(self):
+        """Properly close all camera streams."""
+        for pipe in self.pipes:
+            pipe.stop()
+        print("All camera streams closed.")
+
+
 if __name__ == "__main__":
     cams = RealsenseAPI()
 
     print(f"Num cameras: {cams.get_num_cameras()}")
+    
+    # Test camera options
+    if cams.get_num_cameras() > 0:
+        options = cams.get_camera_options(0)
+        print("Camera 0 options:", options)
+        
+        # Test key parameters
+        key_params = cams.get_key_camera_params(0)
+        print("Camera 0 key params:", key_params)
+    
     rgbd = cams.get_rgbd()
     rgb = cams.get_rgb()
     from PIL import Image
     image = Image.fromarray(rgb[0].astype(np.uint8), "RGB")
     image.save("test.jpg")
+    
+    cams.close()
