@@ -8,6 +8,7 @@ from pynput.keyboard import Listener, Key
 import sys
 import argparse
 from realsense_wrapper.realsense_d435 import RealsenseAPI
+import json
 
 
 '''
@@ -72,6 +73,7 @@ class CameraDisplay:
         self.exposure_adjustment = 0
         self.gain_adjustment = 0
         self.current_camera = 0  # For parameter adjustment
+        self.ctrl_pressed = False  # Track Ctrl key state
         
         # Threading
         self.display_thread = None
@@ -81,7 +83,66 @@ class CameraDisplay:
         self.current_frames = None
         self.frame_lock = threading.Lock()
         
+        # Store initial camera parameters for recovery
+        self.initial_params = {}
+        self.save_initial_parameters()
+        
         print("Camera Display initialized. Press 'h' for help.")
+
+    def save_initial_parameters(self):
+        """Save initial camera parameters for all cameras."""
+        try:
+            self.initial_params = {}
+            for i in range(self.num_cameras):
+                options = self.camera_system.get_camera_options(i)
+                self.initial_params[i] = {}
+                
+                # Save color sensor parameters
+                if 'color' in options:
+                    self.initial_params[i]['color'] = {}
+                    for param_name, param_info in options['color'].items():
+                        self.initial_params[i]['color'][param_name] = param_info['current']
+                
+                # Save depth sensor parameters
+                if 'depth' in options:
+                    self.initial_params[i]['depth'] = {}
+                    for param_name, param_info in options['depth'].items():
+                        self.initial_params[i]['depth'][param_name] = param_info['current']
+            
+            # Save to file
+            params_file = os.path.join(self.save_dir, "initial_camera_params.json")
+            with open(params_file, 'w') as f:
+                json.dump(self.initial_params, f, indent=2)
+            
+            print(f"Initial camera parameters saved to {params_file}")
+            
+        except Exception as e:
+            print(f"Failed to save initial parameters: {e}")
+
+    def restore_initial_parameters(self):
+        """Restore all cameras to their initial parameters."""
+        try:
+            for camera_idx, camera_params in self.initial_params.items():
+                # Restore color parameters
+                if 'color' in camera_params:
+                    color_params = camera_params['color']
+                    if 'exposure' in color_params:
+                        self.camera_system.set_exposure(camera_idx, color_params['exposure'])
+                    if 'white_balance' in color_params:
+                        self.camera_system.set_white_balance(camera_idx, color_params['white_balance'])
+                    if 'gain' in color_params:
+                        self.camera_system.set_gain(camera_idx, color_params['gain'])
+                
+                # Restore depth parameters
+                if 'depth' in camera_params:
+                    depth_params = camera_params['depth']
+                    if 'laser_power' in depth_params:
+                        self.camera_system.set_laser_power(camera_idx, depth_params['laser_power'])
+            
+            print("All cameras restored to initial parameters")
+            
+        except Exception as e:
+            print(f"Failed to restore initial parameters: {e}")
 
     def create_grid_display(self, frames):
         """
@@ -293,6 +354,11 @@ class CameraDisplay:
     def on_key_press(self, key):
         """Handle key press events."""
         try:
+            # Track Ctrl key state
+            if key == Key.ctrl_l or key == Key.ctrl_r:
+                self.ctrl_pressed = True
+                return
+            
             if hasattr(key, 'char') and key.char:
                 if key.char == 's':
                     self.save_frame_flag = True
@@ -317,7 +383,12 @@ class CameraDisplay:
                 elif key.char == 'h':
                     self.print_help()
                 
-                elif key.char == '=':
+                elif key.char == 'r' and self.ctrl_pressed:
+                    # Restore initial parameters (Ctrl+R)
+                    self.restore_initial_parameters()
+                
+                # Protected parameter adjustment keys (require Ctrl)
+                elif key.char == '=' and self.ctrl_pressed:
                     # Increase exposure
                     try:
                         options = self.camera_system.get_camera_options(self.current_camera)
@@ -326,10 +397,11 @@ class CameraDisplay:
                             max_val = options['color']['exposure']['max']
                             new_val = min(current + 10, max_val)
                             self.camera_system.set_exposure(self.current_camera, new_val)
+                            print(f"Camera {self.current_camera+1}: Exposure increased to {new_val}")
                     except Exception as e:
                         print(f"Failed to adjust exposure: {e}")
                 
-                elif key.char == '-':
+                elif key.char == '-' and self.ctrl_pressed:
                     # Decrease exposure
                     try:
                         options = self.camera_system.get_camera_options(self.current_camera)
@@ -338,16 +410,23 @@ class CameraDisplay:
                             min_val = options['color']['exposure']['min']
                             new_val = max(current - 10, min_val)
                             self.camera_system.set_exposure(self.current_camera, new_val)
+                            print(f"Camera {self.current_camera+1}: Exposure decreased to {new_val}")
                     except Exception as e:
                         print(f"Failed to adjust exposure: {e}")
                 
-                elif key.char == 'a':
+                elif key.char == 'a' and self.ctrl_pressed:
                     # Auto exposure
                     self.camera_system.set_exposure(self.current_camera, None)
+                    print(f"Camera {self.current_camera+1}: Auto exposure enabled")
                 
-                elif key.char == 'w':
+                elif key.char == 'w' and self.ctrl_pressed:
                     # Auto white balance
                     self.camera_system.set_white_balance(self.current_camera, None)
+                    print(f"Camera {self.current_camera+1}: Auto white balance enabled")
+                
+                # Show warning if protected keys are pressed without Ctrl
+                elif key.char in ['=', '-', 'a', 'w'] and not self.ctrl_pressed:
+                    print(f"Hold Ctrl and press '{key.char}' to adjust camera parameters")
         
         except AttributeError:
             # Handle special keys
@@ -356,7 +435,9 @@ class CameraDisplay:
 
     def on_key_release(self, key):
         """Handle key release events."""
-        pass
+        # Track Ctrl key state
+        if key == Key.ctrl_l or key == Key.ctrl_r:
+            self.ctrl_pressed = False
 
     def print_help(self):
         """Print help information."""
@@ -367,17 +448,21 @@ class CameraDisplay:
         'q' - Quit application
         'm' - Cycle display modes (RGB -> Depth -> RGBD)
         'c' - Cycle through cameras for parameter adjustment
-        '=' - Increase exposure for current camera
-        '-' - Decrease exposure for current camera
-        'a' - Enable auto exposure for current camera
-        'w' - Enable auto white balance for current camera
         'h' - Show this help
         ESC - Quit application
+        
+        Camera Parameter Controls (Require Ctrl key):
+        Ctrl+'=' - Increase exposure for current camera
+        Ctrl+'-' - Decrease exposure for current camera
+        Ctrl+'a' - Enable auto exposure for current camera
+        Ctrl+'w' - Enable auto white balance for current camera
+        Ctrl+'r' - Restore all cameras to initial parameters
         
         Current settings:
         - Mode: {mode}
         - Current camera: {cam}
         - Save directory: {save_dir}
+        - Ctrl protection: ENABLED (prevents accidental parameter changes)
         """.format(
             mode=self.display_mode,
             cam=self.current_camera + 1,
