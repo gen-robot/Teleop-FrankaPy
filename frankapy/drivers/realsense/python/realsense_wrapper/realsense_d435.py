@@ -240,11 +240,10 @@ class RealsenseAPI:
             for sensor_type, sensor in sensors.items():
                 if sensor_type == 'device':
                     continue
-                    
                 options_info[sensor_type] = {}
-                for option in rs.option:
+                for option in sensor.get_supported_options():
                     try:
-                        if sensor.supports(option):
+                        if not sensor.is_option_read_only(option):
                             current_value = sensor.get_option(option)
                             option_range = sensor.get_option_range(option)
                             options_info[sensor_type][option.name] = {

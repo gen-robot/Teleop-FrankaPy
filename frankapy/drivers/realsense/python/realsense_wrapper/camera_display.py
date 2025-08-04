@@ -198,7 +198,7 @@ class CameraDisplay:
                     cv2.putText(grid_image, status_text, (10, grid_image.shape[0] - 20), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
-                    cv2.imshow('Camera Display', grid_image)
+                    cv2.imshow('Camera Display', cv2.cvtColor(grid_image, cv2.COLOR_RGB2BGR))
                 
                 # Check for window close or ESC key
                 key = cv2.waitKey(1) & 0xFF
@@ -324,7 +324,7 @@ class CameraDisplay:
                         if 'color' in options and 'exposure' in options['color']:
                             current = options['color']['exposure']['current']
                             max_val = options['color']['exposure']['max']
-                            new_val = min(current + 1000, max_val)
+                            new_val = min(current + 10, max_val)
                             self.camera_system.set_exposure(self.current_camera, new_val)
                     except Exception as e:
                         print(f"Failed to adjust exposure: {e}")
@@ -336,7 +336,7 @@ class CameraDisplay:
                         if 'color' in options and 'exposure' in options['color']:
                             current = options['color']['exposure']['current']
                             min_val = options['color']['exposure']['min']
-                            new_val = max(current - 1000, min_val)
+                            new_val = max(current - 10, min_val)
                             self.camera_system.set_exposure(self.current_camera, new_val)
                     except Exception as e:
                         print(f"Failed to adjust exposure: {e}")
