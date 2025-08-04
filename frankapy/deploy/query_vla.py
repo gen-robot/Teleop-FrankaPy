@@ -80,8 +80,10 @@ class VLADeploy:
         self.command_rotation = self.init_rotation
 
     def robot_init(self):
-        self.robot.reset_joints()
+        # self.robot.reset_joints()
+        self.robot.reset_pose()
         self.robot.open_gripper()
+        print(self.robot.get_joints())
         input("[INFO] Press enter to continue")
         # start a new skill 
         self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE', 

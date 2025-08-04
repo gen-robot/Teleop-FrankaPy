@@ -2,7 +2,7 @@ import numpy as np
 import pyrealsense2 as rs
 from collections import OrderedDict
 
-import Time
+import time
 from PIL import Image
 import cv2
 
@@ -127,7 +127,7 @@ if __name__ == "__main__":
     print(f"Num cameras: {cams.get_num_cameras()}")
 
     # 读取参考图像并转换为numpy格式
-    ref_image = Image.open("camera_ref.png").convert("RGB")
+    ref_image = Image.open("camera_ref.jpeg").convert("RGB")
     ref_image = np.array(ref_image).astype(np.uint8)
 
     if ref_image.shape != (480, 480, 3):

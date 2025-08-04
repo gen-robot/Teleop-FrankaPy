@@ -25,7 +25,7 @@ class FrankaConstants:
             [1, 0, 0],
             [0, -1, 0],
             [0, 0, -1],
-        ]), translation=np.array([0.3069, 0, 0.4867]),
+        ]), translation=np.array([0.3069, 0, 0.4067]),
         from_frame='franka_tool', to_frame='world')
 
     HOME_JOINTS = [0, 0.259, 0, -2.289, 0, 2.515, math.pi / 4]
