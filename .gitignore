@@ -2,3 +2,4 @@ datasets/
 *.jpg
 logs/
 .vscode/
+camera_captures

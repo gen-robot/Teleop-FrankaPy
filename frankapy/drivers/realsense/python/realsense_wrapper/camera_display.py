@@ -116,8 +116,73 @@ class CameraDisplay:
                     auto_wb = params['color'].get('enable_auto_white_balance', 'Unknown')
                     print(f"Camera {i+1} initial settings: Auto Exposure={auto_exp}, Auto White Balance={auto_wb}")
             
+            # Save initial parameters to file
+            self.save_initial_frames()
+            
         except Exception as e:
             print(f"Failed to save initial parameters: {e}")
+
+    def save_initial_frames(self):
+        """Save initial camera parameters as text file."""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create initial parameters directory
+            initial_dir = os.path.join(self.save_dir, f"initial_params_{timestamp}")
+            os.makedirs(initial_dir, exist_ok=True)
+            
+            # Get camera parameters for all cameras
+            all_camera_params = self.camera_system.get_all_cameras_params()
+            
+            # Save parameters info as text file
+            params_file = os.path.join(initial_dir, "initial_camera_params.txt")
+            with open(params_file, 'w') as f:
+                f.write(f"Initial Parameters Saved Time: {timestamp}\n")
+                f.write(f"Resolution: {self.width}x{self.height}\n")
+                f.write(f"FPS: {self.fps}\n\n")
+                
+                for cam_name, params in all_camera_params.items():
+                    f.write(f"{cam_name} initial parameters:\n")
+                    for param_name, param_value in params.items():
+                        f.write(f"  {param_name}: {param_value}\n")
+                    f.write("\n")
+            
+            # Create parameter strings for each camera (like save_current_frames)
+            for i in range(self.num_cameras):
+                cam_params = all_camera_params.get(f'cam{i+1}', {})
+                
+                # Create parameter string for filename (including auto settings)
+                param_parts = []
+                if 'exp' in cam_params:
+                    param_parts.append(f"exp{cam_params['exp']}")
+                if 'gain' in cam_params:
+                    param_parts.append(f"g{cam_params['gain']}")
+                if 'laser' in cam_params:
+                    param_parts.append(f"l{cam_params['laser']}")
+                
+                # Add auto settings to filename
+                if 'auto_exp' in cam_params and cam_params['auto_exp']:
+                    param_parts.append("autoExp")
+                if 'auto_wb' in cam_params and cam_params['auto_wb']:
+                    param_parts.append("autoWB")
+                
+                param_string = "_".join(param_parts) if param_parts else "default"
+                
+                # Save parameter string to individual file for each camera
+                camera_param_file = os.path.join(initial_dir, f"initial_cam{i+1}_{param_string}.txt")
+                with open(camera_param_file, 'w') as f:
+                    f.write(f"Camera {i+1} Initial Parameters\n")
+                    f.write(f"Parameter String: {param_string}\n")
+                    f.write(f"Timestamp: {timestamp}\n\n")
+                    
+                    for param_name, param_value in cam_params.items():
+                        f.write(f"{param_name}: {param_value}\n")
+            
+            print(f"Initial camera parameters saved to {initial_dir}")
+            print(f"Detailed parameters saved to {params_file}")
+            
+        except Exception as e:
+            print(f"Failed to save initial parameters to file: {e}")
 
     def restore_initial_parameters(self):
         """Restore all cameras to their initial parameters."""
