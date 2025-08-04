@@ -109,12 +109,12 @@ class CameraDisplay:
                     for param_name, param_info in options['depth'].items():
                         self.initial_params[i]['depth'][param_name] = param_info['current']
             
-            # Save to file
-            params_file = os.path.join(self.save_dir, "initial_camera_params.json")
-            with open(params_file, 'w') as f:
-                json.dump(self.initial_params, f, indent=2)
-            
-            print(f"Initial camera parameters saved to {params_file}")
+            # Print initial auto settings for verification
+            for i, params in self.initial_params.items():
+                if 'color' in params:
+                    auto_exp = params['color'].get('enable_auto_exposure', 'Unknown')
+                    auto_wb = params['color'].get('enable_auto_white_balance', 'Unknown')
+                    print(f"Camera {i+1} initial settings: Auto Exposure={auto_exp}, Auto White Balance={auto_wb}")
             
         except Exception as e:
             print(f"Failed to save initial parameters: {e}")
@@ -126,10 +126,28 @@ class CameraDisplay:
                 # Restore color parameters
                 if 'color' in camera_params:
                     color_params = camera_params['color']
-                    if 'exposure' in color_params:
-                        self.camera_system.set_exposure(camera_idx, color_params['exposure'])
-                    if 'white_balance' in color_params:
-                        self.camera_system.set_white_balance(camera_idx, color_params['white_balance'])
+                    
+                    # First restore auto exposure setting
+                    if 'enable_auto_exposure' in color_params:
+                        auto_exp_value = color_params['enable_auto_exposure']
+                        if auto_exp_value:
+                            self.camera_system.set_exposure(camera_idx, None)  # Enable auto
+                        else:
+                            # Disable auto and set manual value
+                            if 'exposure' in color_params:
+                                self.camera_system.set_exposure(camera_idx, color_params['exposure'])
+                    
+                    # Then restore auto white balance setting
+                    if 'enable_auto_white_balance' in color_params:
+                        auto_wb_value = color_params['enable_auto_white_balance']
+                        if auto_wb_value:
+                            self.camera_system.set_white_balance(camera_idx, None)  # Enable auto
+                        else:
+                            # Disable auto and set manual value
+                            if 'white_balance' in color_params:
+                                self.camera_system.set_white_balance(camera_idx, color_params['white_balance'])
+                    
+                    # Restore gain
                     if 'gain' in color_params:
                         self.camera_system.set_gain(camera_idx, color_params['gain'])
                 
@@ -308,7 +326,7 @@ class CameraDisplay:
             # Get camera parameters for filename
             cam_params = all_camera_params.get(f'cam{i+1}', {})
             
-            # Create parameter string for filename (only key parameters)
+            # Create parameter string for filename (including auto settings)
             param_parts = []
             if 'exp' in cam_params:
                 param_parts.append(f"exp{cam_params['exp']}")
@@ -316,8 +334,12 @@ class CameraDisplay:
                 param_parts.append(f"g{cam_params['gain']}")
             if 'laser' in cam_params and self.display_mode in ['depth', 'rgbd']:
                 param_parts.append(f"l{cam_params['laser']}")
+            
+            # Add auto settings to filename
             if 'auto_exp' in cam_params and cam_params['auto_exp']:
-                param_parts.append("auto")
+                param_parts.append("autoExp")
+            if 'auto_wb' in cam_params and cam_params['auto_wb']:
+                param_parts.append("autoWB")
             
             param_string = "_".join(param_parts) if param_parts else "default"
             

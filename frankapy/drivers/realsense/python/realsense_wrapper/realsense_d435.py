@@ -140,8 +140,15 @@ class RealsenseAPI:
                     params['gain'] = int(color_sensor.get_option(rs.option.gain))
                 if color_sensor.supports(rs.option.white_balance):
                     params['wb'] = int(color_sensor.get_option(rs.option.white_balance))
+                
+                # Check auto exposure status
                 if color_sensor.supports(rs.option.enable_auto_exposure):
-                    params['auto_exp'] = int(color_sensor.get_option(rs.option.enable_auto_exposure))
+                    params['auto_exp'] = bool(color_sensor.get_option(rs.option.enable_auto_exposure))
+                
+                # Check auto white balance status
+                if color_sensor.supports(rs.option.enable_auto_white_balance):
+                    params['auto_wb'] = bool(color_sensor.get_option(rs.option.enable_auto_white_balance))
+                    
             except Exception:
                 pass
             
