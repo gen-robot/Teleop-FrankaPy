@@ -355,77 +355,125 @@ class SpaceMouse:
         """Listener method that keeps pulling new messages."""
 
         t_last_click = -1
-        
+
         while True:
-            d = self.device.read(13)
-            if d is not None and self._enabled:
-                if self.product_id == 50741:
-                    ## logic for older spacemouse model
+            # Check quit signal to allow clean exit
+            if self.quit_signal:
+                print("SpaceMouse thread exiting...")
+                break
 
-                    if d[0] == 1:  ## readings from 6-DoF sensor
-                        self.y = convert(d[1], d[2])
-                        self.x = convert(d[3], d[4])
-                        self.z = convert(d[5], d[6]) * -1.0
+            try:
+                d = self.device.read(13)
+                if d is not None and self._enabled:
+                    if self.product_id == 50741:
+                        ## logic for older spacemouse model
 
-                    elif d[0] == 2:
+                        if d[0] == 1:  ## readings from 6-DoF sensor
+                            self.y = convert(d[1], d[2])
+                            self.x = convert(d[3], d[4])
+                            self.z = convert(d[5], d[6]) * -1.0
 
-                        self.roll = convert(d[1], d[2])
-                        self.pitch = convert(d[3], d[4])
-                        self.yaw = convert(d[5], d[6])
+                        elif d[0] == 2:
 
-                        self._control = [
-                            self.x,
-                            self.y,
-                            self.z,
-                            self.roll,
-                            self.pitch,
-                            self.yaw,
-                        ]
+                            self.roll = convert(d[1], d[2])
+                            self.pitch = convert(d[3], d[4])
+                            self.yaw = convert(d[5], d[6])
+
+                            self._control = [
+                                self.x,
+                                self.y,
+                                self.z,
+                                self.roll,
+                                self.pitch,
+                                self.yaw,
+                            ]
+                    else:
+                        ## default logic for all other spacemouse models
+
+                        if d[0] == 1:  ## readings from 6-DoF sensor
+                            self.y = convert(d[1], d[2])
+                            self.x = convert(d[3], d[4])
+                            self.z = convert(d[5], d[6]) * -1.0
+
+                            self.roll = convert(d[7], d[8])
+                            self.pitch = convert(d[9], d[10])
+                            self.yaw = convert(d[11], d[12])
+
+                            self._control = [
+                                self.x,
+                                self.y,
+                                self.z,
+                                self.roll,
+                                self.pitch,
+                                self.yaw,
+                            ]
+
+                    if d[0] == 3:  ## readings from the side buttons
+
+                        # press right button
+                        if d[1] == 1:
+                            print("press right button")
+                            t_click = time.time()
+                            elapsed_time = t_click - t_last_click
+                            t_last_click = t_click
+                            self.single_click_and_hold = True
+                            self.gripper_status = 1
+
+                        # release right button
+                        if d[1] == 0:
+                            self.single_click_and_hold = False
+                            print("release right button")
+
+                        # left button is for reset
+                        if d[1] == 2:
+                            self.gripper_status = 0
+                            # self._reset_state = 1
+                            # self._enabled = False
+                            # self._reset_internal_state()
+                            print("press left button")
+            except OSError as e:
+                # Handle device read errors (e.g., when device is closed)
+                if self.quit_signal:
+                    print("SpaceMouse device closed, thread exiting...")
+                    break
                 else:
-                    ## default logic for all other spacemouse models
+                    print(f"SpaceMouse read error: {e}")
+                    time.sleep(0.01)  # Brief pause before retrying
+                    continue
+            except Exception as e:
+                print(f"Unexpected error in SpaceMouse thread: {e}")
+                if self.quit_signal:
+                    break
+                time.sleep(0.01)
+                continue
 
-                    if d[0] == 1:  ## readings from 6-DoF sensor
-                        self.y = convert(d[1], d[2])
-                        self.x = convert(d[3], d[4])
-                        self.z = convert(d[5], d[6]) * -1.0
+    def close(self):
+        """Properly close the SpaceMouse device and stop threads."""
+        print("Closing SpaceMouse...")
+        self.quit_signal = True
+        self._enabled = False
 
-                        self.roll = convert(d[7], d[8])
-                        self.pitch = convert(d[9], d[10])
-                        self.yaw = convert(d[11], d[12])
+        # Stop keyboard listener first
+        if hasattr(self, 'listener') and self.listener:
+            try:
+                self.listener.stop()
+            except Exception as e:
+                print(f"Error stopping keyboard listener: {e}")
 
-                        self._control = [
-                            self.x,
-                            self.y,
-                            self.z,
-                            self.roll,
-                            self.pitch,
-                            self.yaw,
-                        ]
+        # Close HID device
+        if hasattr(self, 'device') and self.device:
+            try:
+                self.device.close()
+            except Exception as e:
+                print(f"Error closing HID device: {e}")
 
-                if d[0] == 3:  ## readings from the side buttons
+        # Wait for thread to finish
+        if hasattr(self, 'thread') and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                print("Warning: SpaceMouse thread did not exit cleanly")
 
-                    # press right button
-                    if d[1] == 1:
-                        print("press right button")
-                        t_click = time.time()
-                        elapsed_time = t_click - t_last_click
-                        t_last_click = t_click
-                        self.single_click_and_hold = True
-                        self.gripper_status = 1
-
-                    # release right button
-                    if d[1] == 0:
-                        self.single_click_and_hold = False
-                        print("release right button")
-
-                    # left button is for reset
-                    if d[1] == 2:
-                        self.gripper_status = 0
-                        # self._reset_state = 1
-                        # self._enabled = False
-                        # self._reset_internal_state()
-                        print("press left button")
-
+        print("SpaceMouse closed properly")
 
     @property
     def control(self):
@@ -488,6 +536,3 @@ if __name__ == "__main__":
     while True:
         print(space_mouse.control, "gripper:", space_mouse.control_gripper)
         time.sleep(0.02)
-
-
-

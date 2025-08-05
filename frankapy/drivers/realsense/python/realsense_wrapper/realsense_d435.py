@@ -280,19 +280,19 @@ if __name__ == "__main__":
 
     print(f"Num cameras: {cams.get_num_cameras()}")
     
-    # Test camera options
-    if cams.get_num_cameras() > 0:
-        options = cams.get_camera_options(0)
-        print("Camera 0 options:", options)
+    # # Test camera options
+    # if cams.get_num_cameras() > 0:
+    #     options = cams.get_camera_options(0)
+    #     print("Camera 0 options:", options)
         
-        # Test key parameters
-        key_params = cams.get_key_camera_params(0)
-        print("Camera 0 key params:", key_params)
+    #     # Test key parameters
+    #     key_params = cams.get_key_camera_params(0)
+    #     print("Camera 0 key params:", key_params)
     
     rgbd = cams.get_rgbd()
     rgb = cams.get_rgb()
     from PIL import Image
-    image = Image.fromarray(rgb[0].astype(np.uint8), "RGB")
+    image = Image.fromarray(rgb[1].astype(np.uint8)) # ,"RGB"
     image.save("test.jpg")
     
     cams.close()

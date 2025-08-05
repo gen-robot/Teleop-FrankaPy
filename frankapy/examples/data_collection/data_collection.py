@@ -67,113 +67,119 @@ class RealDataCollection:
 
 
     def collect_data(self):
+        input("press enter to start collection")
         print("[INFO] Starting data collection...")
         control_rate = rospy.Rate(self.control_frequency)
-        while True:
-            try:
-                # Read SpaceMouse controls
-                if self.use_space_mouse:
-                    control = self.space_mouse.control # xyz in range [-1, 1] in m,  roll picth yaw [-1, 1] in deg
-                    control_gripper = self.space_mouse.gripper_status
-                    control_quit = self.space_mouse.quit_signal
-                else:
-                    control = np.zeros((6,))
-                    control_gripper = 1 # [0,1]
-                    control_quit = False
+        try:
+            while True:
+                try:
+                    # Read SpaceMouse controls
+                    if self.use_space_mouse:
+                        control = self.space_mouse.control # xyz in range [-1, 1] in m,  roll picth yaw [-1, 1] in deg
+                        control_gripper = self.space_mouse.gripper_status
+                        control_quit = self.space_mouse.quit_signal
+                    else:
+                        control = np.zeros((6,))
+                        control_gripper = 1 # [0,1]
+                        control_quit = False
 
-                if control_quit:
-                    print("[INFO] Data collection stopped by user.")
+                    if control_quit:
+                        print("[INFO] Data collection stopped by user.")
+                        self.robot.stop_skill()
+                        rospy.loginfo('Done')
+                        break
+
+                    # for space mouse: roll pitch yaw -> For panda: pitch roll yaw (defined by user bingwen)
+                    control_xyz = control[:3]
+                    if self.args.user_frame:
+                        control_xyz[:2] *= -1
+
+                    control_euler = control[3:6][[1,0,2]] * np.array([-1,-1,1])
+                    control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.35)
+                    control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.35)
+
+                    delta_xyz = control_xyz * self.pos_scale
+                    # delta_xyz *= 0
+                    delta_euler = control_euler * self.rot_scale # z, y, x
+                    # delta_euler *= 0
+                    delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
+
+                    # Compute target pose
+                    self.command_xyz += delta_xyz
+                    self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+                    # u, _, vh = np.linalg.svd(self.command_rotation)
+                    # self.command_rotation = np.matmul(u, vh)
+
+                    timestamp = rospy.Time.now().to_time()-self.init_time
+
+                    save_action = {
+                        "delta": {
+                            "position": delta_xyz,
+                            "orientation": euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
+                            "euler_angle": delta_euler,
+                        },
+                        "abs": {
+                            "position": copy.deepcopy(self.command_xyz),
+                            "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
+                        },
+                        "gripper_width": control_gripper
+                    }
+
+                    # Collect data
+                    self.data_collector.update_data_dict(
+                        instruction=self.instruction,
+                        action=save_action,
+                        # xyz=delta_xyz,
+                        # quat=euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
+                        # gripper_width=control_gripper,
+                        timestamp=timestamp,
+                    )
+
+                    self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
+                    gripper_width = FC.GRIPPER_WIDTH_MAX * control_gripper
+                    # control joint and gripper
+
+                    # ros data send and control
+                    pub_traj_gen_proto_msg = PosePositionSensorMessage(
+                        id=self.action_steps+1, timestamp=timestamp, 
+                        position=self.command_transform.translation, quaternion=self.command_transform.quaternion
+                    )
+                    fb_ctrlr_proto = CartesianImpedanceSensorMessage(
+                        id=self.action_steps+1, timestamp=timestamp,
+                        translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
+                        rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
+                    )
+                    ros_pub_sensor_msg = make_sensor_group_msg(
+                        trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+                            pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
+                        feedback_controller_sensor_msg=sensor_proto2ros_msg(
+                            fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
+                    )
+                    rospy.loginfo(f'Publishing: Steps {self.action_steps+1}, delta_xyz = {delta_xyz}')
+                    self.robot.publish_sensor_values(ros_pub_sensor_msg)
+                    if abs(gripper_width - self.last_gripper_width) > 0.02:
+                        grasp = True if control_gripper<0.5 else False
+                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
+                        self.last_gripper_width = gripper_width
+
+                    self.action_steps += 1
+                    control_rate.sleep()
+                except KeyboardInterrupt:
+                    print("[INFO] Data collection stopped by keyboard interrupt.")
                     self.robot.stop_skill()
                     rospy.loginfo('Done')
                     break
-
-                # for space mouse: roll pitch yaw -> For panda: pitch roll yaw (defined by user bingwen)
-                control_xyz = control[:3]
-                if self.args.user_frame:
-                    control_xyz[:2] *= -1
-                
-                control_euler = control[3:6][[1,0,2]] * np.array([-1,-1,1])
-                control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.35)
-                control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.35)
-
-                delta_xyz = control_xyz * self.pos_scale
-                # delta_xyz *= 0
-                delta_euler = control_euler * self.rot_scale # z, y, x
-                # delta_euler *= 0
-                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
-
-                # Compute target pose
-                self.command_xyz += delta_xyz
-                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
-                # u, _, vh = np.linalg.svd(self.command_rotation)
-                # self.command_rotation = np.matmul(u, vh)
-
-                timestamp = rospy.Time.now().to_time()-self.init_time
-
-                save_action = {
-                    "delta": {
-                        "position": delta_xyz,
-                        "orientation": euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
-                        "euler_angle": delta_euler,
-                    },
-                    "abs": {
-                        "position": copy.deepcopy(self.command_xyz),
-                        "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
-                    },
-                    "gripper_width": control_gripper
-                }
-
-                # Collect data
-                self.data_collector.update_data_dict(
-                    instruction=self.instruction,
-                    action=save_action,
-                    # xyz=delta_xyz,
-                    # quat=euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
-                    # gripper_width=control_gripper,
-                    timestamp=timestamp,
-                )
-
-                self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
-                gripper_width = FC.GRIPPER_WIDTH_MAX * control_gripper
-                # control joint and gripper
-
-                # ros data send and control
-                pub_traj_gen_proto_msg = PosePositionSensorMessage(
-                    id=self.action_steps+1, timestamp=timestamp, 
-                    position=self.command_transform.translation, quaternion=self.command_transform.quaternion
-                )
-                fb_ctrlr_proto = CartesianImpedanceSensorMessage(
-                    id=self.action_steps+1, timestamp=timestamp,
-                    translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
-                    rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
-                )
-                ros_pub_sensor_msg = make_sensor_group_msg(
-                    trajectory_generator_sensor_msg=sensor_proto2ros_msg(
-                        pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
-                    feedback_controller_sensor_msg=sensor_proto2ros_msg(
-                        fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
-                )
-                rospy.loginfo(f'Publishing: Steps {self.action_steps+1}, delta_xyz = {delta_xyz}')
-                self.robot.publish_sensor_values(ros_pub_sensor_msg)
-                if abs(gripper_width - self.last_gripper_width) > 0.02:
-                    grasp = True if control_gripper<0.5 else False
-                    self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
-                    self.last_gripper_width = gripper_width
-
-                self.action_steps += 1
-                control_rate.sleep()
-            except KeyboardInterrupt:
-                print("[INFO] Data collection stopped by user.")
-                self.robot.stop_skill()
-                rospy.loginfo('Done')
-                break
-            except Exception as e:
-                print(f"[ERROR] An error occurred during data collection: {e}")
-                control_rate.sleep()
-                # time.sleep(self.control_time_step)
-                self.ee_pose_init()
-                continue
-                # break
+                except Exception as e:
+                    print(f"[ERROR] An error occurred during data collection: {e}")
+                    control_rate.sleep()
+                    self.ee_pose_init()
+                    continue
+        finally:
+            # Clean up resources
+            if self.use_space_mouse:
+                self.space_mouse.close()
+            if hasattr(self, 'cameras'):
+                self.cameras.close()
 
     def get_next_episode_idx(self, task_dir):
         """
