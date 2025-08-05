@@ -136,13 +136,13 @@ class RealtimeJointSysIdController:
                 rospy.logwarn("Daemon thread did not stop in time, force stopping.")
         rospy.loginfo("daemon thread stopped.")
 
-    def step_joint_action_real(self, action, init_time):
+    def step_joint_action_real(self, id, action, init_time):
         '''
         Pass the joint action to real robot
         '''
         try:
             traj_gen_proto_msg = JointPositionSensorMessage(
-                id=0, timestamp=rospy.Time.now().to_time() - init_time, 
+                id=id, timestamp=rospy.Time.now().to_time() - init_time, 
                 joints=action
             )
             ros_msg = make_sensor_group_msg(
@@ -208,7 +208,7 @@ class RealtimeJointSysIdController:
                 action[joint_idx] = goal_pos
 
                 # Not blocking
-                self.step_joint_action_real(action, init_time)
+                self.step_joint_action_real(i, action, init_time)
 
                 # get joint state from daemon thread. not blocking
                 current_joints = self.get_latest_joint_state()
@@ -268,7 +268,9 @@ class RealtimeJointSysIdController:
             rospy.loginfo("system identification experiment completed.")
 
 
-def main(args: Args):
+def main():
+    args = tyro.cli(Args)
+
     """Main execution function that accepts an instance of the Args class."""
     cprint(f"Starting system identification trajectory generation...\n{args}", "yellow")
     cprint(args, "yellow")
@@ -290,4 +292,4 @@ def main(args: Args):
     )
 
 if __name__ == "__main__":
-    tyro.cli(main)
+    main()
