@@ -6,12 +6,13 @@ from kinematics.frankapy_utils import IKSolver, DynamicJointTrajectoryPublisher,
 import rospy
 
 
-def execute_static_trajectory(fa, pose_traj, T, dt):
+def execute_static_trajectory(fa: FrankaArm, pose_traj, T, dt):
     """Execute trajectory using static IK solving (solve all poses at once)"""
     rospy.loginfo('Executing static trajectory')
     
     # Initialize IK solver
-    ik_solver = IKSolver()
+    ik_solver = IKSolver(urdf_path="/home/franka/Documents/bingwen/assets/panda/panda_v3.urdf",
+                         target_link_name="panda_hand_tcp")
     
     # Get current joint state
     current_joints = fa.get_joints()
@@ -25,11 +26,11 @@ def execute_static_trajectory(fa, pose_traj, T, dt):
     rate = rospy.Rate(1 / dt)
     
     # Start dynamic execution with first joint position
-    traj_publisher.start_dynamic_execution(fa, joints_traj[1], T)
+    traj_publisher.start_dynamic_execution(fa, joints_traj[1][:7], T)
     
     # Publish remaining joint targets
     for i in range(2, len(joints_traj)):
-        traj_publisher.publish_joint_target(joints_traj[i], i)
+        traj_publisher.publish_joint_target(joints_traj[i][:7], i)
         rate.sleep()
     
     # Terminate execution
@@ -41,6 +42,8 @@ if __name__ == "__main__":
         rospy.loginfo('Initializing FrankaArm and resetting joints')
         fa = FrankaArm()
         fa.reset_joints()
+
+        input("press enter to start ik")
         
         # Generate pose trajectory
         rospy.loginfo('Generating pose trajectory')

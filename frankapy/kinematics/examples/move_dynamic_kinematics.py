@@ -11,7 +11,8 @@ def execute_dynamic_trajectory(fa, pose_traj, T, dt):
     rospy.loginfo('Executing dynamic trajectory with real-time IK solving')
     
     # Initialize IK solver and trajectory publisher
-    ik_solver = IKSolver()
+    ik_solver = IKSolver(urdf_path="/home/franka/Documents/bingwen/assets/panda/panda_v3.urdf",
+                         target_link_name="panda_hand_tcp")
     traj_publisher = DynamicJointTrajectoryPublisher()
     
     # Get current joint state and solve first pose
@@ -35,7 +36,7 @@ def execute_dynamic_trajectory(fa, pose_traj, T, dt):
         try:
             solution = ik_solver.solve_ik(actual_joints, pose_traj[i])
             rospy.loginfo(f'IK solution found for pose {i+1}: {solution}')
-            
+            print(f"delta_joints {actual_joints[:7] - solution[:7]}")
             # Publish joint target
             traj_publisher.publish_joint_target(solution, i)
             
@@ -54,6 +55,8 @@ if __name__ == "__main__":
         rospy.loginfo('Initializing FrankaArm and resetting joints')
         fa = FrankaArm()
         fa.reset_joints()
+        
+        input("press enter to start ik")
         
         # Generate pose trajectory
         rospy.loginfo('Generating dynamic pose trajectory')

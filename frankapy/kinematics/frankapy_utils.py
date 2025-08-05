@@ -2,6 +2,7 @@ import numpy as np
 import yourdfpy
 import pyroki as pk
 import kinematics.solution as pks
+from kinematics import URDF_GRIPPER_OPEN, URDF_GRIPPER_CLOSE
 
 from autolab_core import RigidTransform
 from frankapy import FrankaArm, SensorDataMessageType
@@ -32,6 +33,7 @@ class IKSolver:
     def solve_ik(self, joints_state, target_pose):
         """Solve IK for a target pose"""
         try:
+            joints_state = np.concatenate([joints_state, np.array([URDF_GRIPPER_OPEN])], axis=-1)
             self.update_robot_state(joints_state)
             solution = pks.solve_ik(
                 robot=self.robot,
@@ -52,7 +54,7 @@ class IKSolver:
         joints_traj.append(init_joints_state)
 
         for i, pose in enumerate(pose_trajectory):
-            solution = self.solve_ik(joints_traj[-1], pose)
+            solution = self.solve_ik(joints_traj[-1][:7], pose)
             joints_traj.append(solution)
             
             if i % 50 == 0:
@@ -69,9 +71,9 @@ class DynamicJointTrajectoryPublisher:
         self.init_time = None
         rospy.loginfo('Dynamic Trajectory Publisher initialized')
     
-    def start_dynamic_execution(self, fa, first_joints, total_duration, buffer_time=10):
+    def start_dynamic_execution(self, fa: FrankaArm, first_joints, total_duration, buffer_time=10):
         """Start dynamic trajectory execution with first joint position"""
-        fa.goto_joints(first_joints, duration=total_duration, dynamic=True, buffer_time=buffer_time)
+        fa.goto_joints(first_joints[:7], duration=total_duration, dynamic=True, buffer_time=buffer_time, ignore_virtual_walls=True)
         self.init_time = rospy.Time.now().to_time()
         rospy.loginfo('Dynamic execution started')
     
@@ -80,7 +82,7 @@ class DynamicJointTrajectoryPublisher:
         traj_gen_proto_msg = JointPositionSensorMessage(
             id=trajectory_id,
             timestamp=rospy.Time.now().to_time() - self.init_time,
-            joints=joint_positions
+            joints=joint_positions[:7]
         )
         
         ros_msg = make_sensor_group_msg(
@@ -106,18 +108,18 @@ class DynamicJointTrajectoryPublisher:
 
 
 def generate_pose_trajectory(fa: FrankaArm):
-    
+
     p0 = fa.get_pose()
-    p1 = p0.copy()
-    
-    # move up for 20 cm and rotate 30 degrees around z-axis
+
+    # delta in tool frame
     T_delta = RigidTransform(
-        translation=np.array([0, 0, 0.2]),
+        translation=np.array([0, 0, -0.2]),
         rotation=RigidTransform.z_axis_rotation(np.deg2rad(30)),
-        from_frame=p1.from_frame, to_frame=p1.from_frame
+        from_frame=p0.from_frame,  # 'franka_tool'
+        to_frame=p0.from_frame     # 'franka_tool'
     )
-    p1 = p1 * T_delta
-    
+    p1 = p0 * T_delta
+
     # set trajectory duration and time step
     T = 5 # s
     dt = 0.02
@@ -125,6 +127,6 @@ def generate_pose_trajectory(fa: FrankaArm):
 
     # generate min jerk trajectory weights
     weights = [min_jerk_weight(t, T) for t in ts]
-    pose_traj = [p1.interpolate_with(p0, w) for w in weights]
-    
+    pose_traj = [p0.interpolate_with(p1, w) for w in weights]
+
     return pose_traj, T, dt
