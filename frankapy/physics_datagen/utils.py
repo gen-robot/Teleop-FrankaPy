@@ -110,7 +110,7 @@ def plot_loss_surface(kp_kv_div, kv, loss_values, joint_id, savename, loss_range
     
 # ============================================= traj ============================================= #
 
-def sine_traj(lower, upper, num_wave=3, sample_rate=60, min_freq=0.5, max_freq=2.0):
+def sine_traj(lower, upper, num_wave=3, sample_rate=60, min_freq=0.5, max_freq=1.5):
     t = np.linspace(0, num_wave, int(num_wave * sample_rate))
     freq = np.linspace(min_freq, max_freq, len(t))
     sine_wave = np.sin(2 * np.pi * freq * t)

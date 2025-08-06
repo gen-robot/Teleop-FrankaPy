@@ -11,7 +11,9 @@ You can try this script to record real arm motion data under some different comm
 
 ```bash
 cd physics_datagen
-trajectory_type='sine'  # one of step, sine, valid, combined, policy
+
+# sine is the best for our panda robot
+trajectory_type='sine'  # one of step, sine, triangle, combined
 output="csv/test_joint"
 for joint_idx in 6
 do
@@ -23,8 +25,8 @@ do
 done
 
 
-
-trajectory_type='sine'  # one of step, sine, valid, combined, policy
+# sine is the best for our panda robot
+trajectory_type='sine'  # one of step, sine, triangle, combined
 output="csv/test_joint"
 python sysid_joint_traj_gen.py \
     --ctrl_freq 10 \

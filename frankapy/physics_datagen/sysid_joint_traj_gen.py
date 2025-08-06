@@ -40,7 +40,7 @@ class Args:
 class RealtimeJointSysIdController:
     def __init__(self, state_update_freq=100, ctrl_freq=10):
         self.real_arm = FrankaArm('realtime_sysid_controller')
-        
+
         # initialize lock and event for realtime control.
         self.current_joint_state = None
         self.state_lock = threading.Lock()  # create a lock, for shared data read and write.
@@ -49,7 +49,7 @@ class RealtimeJointSysIdController:
         self.ctrl_rate = rospy.Rate(ctrl_freq)
         self.ctrl_duration = 1.0 / ctrl_freq
         self.state_update_rate = rospy.Rate(state_update_freq)
-        
+
         vis_pose = False
         self.vis_pose = vis_pose
 
@@ -72,9 +72,9 @@ class RealtimeJointSysIdController:
 
                 with self.state_lock:
                     self.current_joint_state = joints
-                
+
                 self.state_update_rate.sleep()
-      
+
             except rospy.ROSInterruptException:
                 rospy.loginfo("ROS interrupted, stopping state update thread")
                 break
@@ -155,6 +155,23 @@ class RealtimeJointSysIdController:
         except Exception as e:
             rospy.logerr(f"Failed to publish action: {e}")
 
+
+    def send_termination_signal(self, init_time):
+        """equal to robot.stop_skill()"""
+        try:
+            term_proto_msg = ShouldTerminateSensorMessage(
+                timestamp=rospy.Time.now().to_time() - init_time, 
+                should_terminate=True
+            )
+            ros_msg = make_sensor_group_msg(
+                termination_handler_sensor_msg=sensor_proto2ros_msg(
+                    term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
+            )
+            self.real_arm.publish_sensor_values(ros_msg)
+            rospy.loginfo("Termination signal sent")
+        except Exception as e:
+            rospy.logerr(f"Failed to send termination signal: {e}")
+
     def run_trajectory_experiment(self, trajectory_type, joint_idx, param, show_plot=False, output="csv/"):
         try:
             self.start_backend_state_update()
@@ -170,7 +187,7 @@ class RealtimeJointSysIdController:
             self.real_arm.goto_joints(np.array(INIT_GOAL_POSE[:7]))
             self.real_arm.open_gripper()
             rospy.sleep(1.0)
-            self.real_current_joint_state = self.real_arm.get_joints()
+            # self.real_current_joint_state = self.real_arm.get_joints() # new modify, maybe should be deleted
             input("Hand on power switch... Press Enter to continue...")
 
             ''' -------------------------------------- INITIAL START DYNAMIC -------------------------------------- '''
@@ -189,7 +206,7 @@ class RealtimeJointSysIdController:
                                         ignore_virtual_walls=True) 
             init_time = rospy.Time.now().to_time() # to_sec()?
             start_time = time.time()
-            
+
             # initialize data recording list
             goal_positions = []
             actual_positions = []
@@ -197,52 +214,59 @@ class RealtimeJointSysIdController:
             actual_vels = []
 
             ''' -------------------------------------- CONTROL LOOP -------------------------------------- '''
-            
+            rospy.loginfo(f"Starting trajectory with {len(goal_pos_list)} points")
+
             # realtime control loop
             for i, pos in enumerate(goal_pos_list):
-                init_time = rospy.Time.now().to_time() if i==0 else init_time # @bingwen 1 or 0?
+                try:
+                    action = init_joint_state.copy()
+                    goal_pos = np.clip(pos, lower, upper)
+                    action[joint_idx] = goal_pos
 
-                # only update one of initial joints.
-                action = init_joint_state.copy()
-                goal_pos = np.clip(pos, lower, upper)
-                action[joint_idx] = goal_pos
+                    # Not blocking
+                    self.step_joint_action_real(i, action, init_time)
 
-                # Not blocking
-                self.step_joint_action_real(i, action, init_time)
+                    # get current joint state
+                    current_joints = self.get_latest_joint_state()
+                    if current_joints is None:
+                        rospy.logwarn("Unable to acquire valid joint state, skipping this iteration")
+                        continue
 
-                # get joint state from daemon thread. not blocking
-                current_joints = self.get_latest_joint_state()
-                if current_joints is None:
-                    rospy.logerr(" ================= unable to accquire valid joint state, skip recording this time ================= ")
+                    signed_current_vel = 0.0 
+
+                    # recode data
+                    goal_positions.append(float(goal_pos))  # just record single joint pos
+                    actual_positions.append(float(current_joints[joint_idx]))  # just record single joint pos
+                    actual_vels.append(signed_current_vel)
+                    t_history.append(time.time() - start_time)
+
+                    self.ctrl_rate.sleep()
+
+                    if i % 10 == 0:
+                        rospy.loginfo(f"Progress: {i}/{len(goal_pos_list)}, Goal: {goal_pos:.3f}, Actual: {current_joints[joint_idx]:.3f}")
+
+                except Exception as e:
+                    rospy.logerr(f"Error in control loop iteration {i}: {e}")
                     continue
-                
-                # data recording
-                # Placeholder for actual velocity feedback, if we don't have speed feedback, using 0 intead.
-                signed_current_vel = 0
-                # if not i == len(goal_pos_list)-1: # @bingwen to fix.
-                #     goal_positions.append(goal_pos)
-                goal_positions.append(action)
-                actual_positions.append(current_joints)
-                actual_vels.append(signed_current_vel) # maybe can get from frankapy
-                t_history.append(time.time() - start_time)
 
-                # strictly control frequency
-                self.ctrl_rate.sleep()
+            rospy.loginfo("Trajectory completed, sending termination signal...")
 
-                # For strict frequency control:
-                # while rospy.Time.now().to_time() - init_time < self.ctrl_duration * (i + 1):
-                #     rospy.sleep(0.0001)
 
-            if not (len(actual_positions)==len(actual_vels)==len(t_history)==len(goal_positions)):
-                rospy.loginfo("Data lengths do not match! Check your control loop.")
+            data_lengths = [len(actual_positions), len(actual_vels), len(t_history), len(goal_positions)]
+            if not all(length == data_lengths[0] for length in data_lengths):
+                rospy.logwarn(f"Data lengths do not match: {data_lengths}")
+                min_length = min(data_lengths)
+                actual_positions = actual_positions[:min_length]
+                actual_vels = actual_vels[:min_length]
+                t_history = t_history[:min_length]
+                goal_positions = goal_positions[:min_length]
 
-            rospy.loginfo("trajectory execution completed.")
-            rospy.sleep(1.0)
+            rospy.loginfo("Trajectory execution completed.")
 
             # save data to csv, save all joints
             df = pd.DataFrame({
                 't': np.array(t_history),
-                'init_qpos': np.array(init_joint_state).tolist(),
+                'init_qpos': np.array([np.array(init_joint_state).tolist()]*len(t_history)).tolist(),
                 'goal_position': np.array(goal_positions).tolist(),
                 'actual_position': np.array(actual_positions).tolist(),
                 'actual_velocity': np.array(actual_vels),
@@ -251,7 +275,7 @@ class RealtimeJointSysIdController:
             data_filename = f"{filename}.csv"
             os.makedirs(output, exist_ok=True)
             df.to_csv(os.path.join(output, data_filename), index=False)
-            print(f"Data saved to {data_filename}")
+            rospy.loginfo(f"Data saved to {data_filename}")
 
             # plot the trajectory
             plot_trajectory(t_history, actual_positions, goal_positions, actual_vels, filename, output, show_plot)
@@ -263,17 +287,20 @@ class RealtimeJointSysIdController:
             rospy.logerr(f"Experiment failed with error: {e}")
             raise
         finally:
-            self.real_arm.stop_skill()
-            self.stop()
-            rospy.loginfo("system identification experiment completed.")
+            try:
+                self.real_arm.stop_skill()
+                rospy.sleep(1.0)
+            except Exception as e:
+                rospy.logerr(f"Error stopping skill: {e}")
 
+            self.stop()
+            rospy.loginfo("System identification experiment completed.")
 
 def main():
     args = tyro.cli(Args)
 
     """Main execution function that accepts an instance of the Args class."""
     cprint(f"Starting system identification trajectory generation...\n{args}", "yellow")
-    cprint(args, "yellow")
     param = {
         "kp": REAL_K_GAINS, # FC.DEFAULT_K_GAINS
         "kv": REAL_D_GAINS, # FC.DEFAULT_D_GAINS
