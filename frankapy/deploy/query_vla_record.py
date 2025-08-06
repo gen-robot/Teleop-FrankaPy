@@ -45,7 +45,7 @@ class Args:
     vla_server_port: int = 9876
     """Port number of the VLA server."""
 
-    enable_logging: bool = True
+    enable_logging: bool = False
     """Whether to enable data logging."""
 
     recording_video_fps: int = 10
