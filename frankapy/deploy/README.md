@@ -20,8 +20,7 @@ You should run `ssh wuqiong3 -L 9876:localhost:9876` to start the terminal, and 
 `ssh <remote_host_ssh_config> -L <local_port>:<destination_host_ip>:<destination_port>`
 
 ```bash
-ssh wuqiong3 -L 9876:localhost:9876
-python deploy/query_vla.py --vla_server_ip "localhost" --vla_server_port 9876
-
+ssh wq3 -L 9876:localhost:9876
+python deploy/query_vla_test.py --vla_server_ip "localhost" --vla_server_port 9876
 # python query_vla_test.py --vla_server_ip "localhost" --vla_server_port 9876
 ```

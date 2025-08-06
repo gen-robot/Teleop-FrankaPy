@@ -33,7 +33,7 @@ class Args:
     ctrl_freq: float = 5.0
     """Control frequency in Hz."""
 
-    record_dir: str = "logs/openpi"
+    record_dir: str = "logs/vla"
     """Directory path for recording data and videos."""
 
     max_steps: int = 500
@@ -95,7 +95,7 @@ class VLADeploy:
         try:
             self.robot.stop_skill()
         except:
-            pass
+            print("stop skill failed")
         self.logger.save_and_cleanup()
 
     def _jpeg_mapping(self, img):
@@ -167,14 +167,14 @@ class VLADeploy:
         )
         
         # Uncomment to actually control the robot
-        # rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
-        # self.robot.publish_sensor_values(ros_pub_sensor_msg)
+        rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
+        self.robot.publish_sensor_values(ros_pub_sensor_msg)
 
         current_gripper_width = self.robot.get_gripper_width()
         if abs(gripper_width - current_gripper_width) > 0.01:
             grasp = True if gripper < 0.5 else False
             # Uncomment to control gripper
-            # self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
+            self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
 
         return True
 
@@ -252,13 +252,14 @@ class VLADeploy:
         except Exception as e:
             print(f"[ERROR] Unexpected error: {e}")
         finally:
+            self.robot.stop_skill()
             print(f"[INFO] Completed {step} steps")
 
 def main():
     args = tyro.cli(Args)
     
     # Create timestamped directory
-    timestamp = time.strftime("OpenPi-%Y-%m-%d-%H-%M-%S")
+    timestamp = time.strftime("VLA-%Y-%m-%d-%H-%M-%S")
     args.record_dir = os.path.join(args.record_dir, timestamp)
     os.makedirs(args.record_dir, exist_ok=True)
 
