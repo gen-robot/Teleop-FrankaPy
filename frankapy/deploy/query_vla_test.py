@@ -133,7 +133,7 @@ class VLADeploy:
     @safe_execute
     def execute_robot_action(self, step, action, timestamp):
         """Execute robot action with delta pose and gripper command"""
-        delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1]
+        delta_xyz, delta_euler, gripper = action[:3], action[3:6], np.clip(action[-1], 0, 1)
         delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2], 'sxyz')
         
         # Calculate target pose

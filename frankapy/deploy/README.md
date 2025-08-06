@@ -22,5 +22,10 @@ You should run `ssh wuqiong3 -L 9876:localhost:9876` to start the terminal, and 
 ```bash
 ssh wq3 -L 9876:localhost:9876
 python deploy/query_vla_test.py --vla_server_ip "localhost" --vla_server_port 9876
-# python query_vla_test.py --vla_server_ip "localhost" --vla_server_port 9876
+# python query_vla.py --vla_server_ip "localhost" --vla_server_port 9876
+```
+
+```bash
+# if you use imageio
+pip install imageio[ffmpeg]
 ```

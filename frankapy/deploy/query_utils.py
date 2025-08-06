@@ -2,13 +2,10 @@ import os
 import json
 import cv2
 import time
+import signal
+import imageio
 import numpy as np
 from datetime import datetime
-import threading
-import signal
-import sys
-from collections import deque
-
 
 class SimpleLogger:
     """
@@ -27,11 +24,8 @@ class SimpleLogger:
         # Core data storage
         self.data_log = []
         
-        # Video recording
-        self.video_writers = {}
-        self.video_queue = deque(maxlen=100)  # Prevent memory explosion
-        self.recording_active = False
-        self.video_thread = None
+        # Simplified video recording - just store images
+        self.video_frames = {}  # {cam_idx: [frame1, frame2, ...]}
         self.init_time = time.time()
         
         print(f"[SimpleLogger] Initialized {'ON' if enable_logging else 'OFF'}")
@@ -40,14 +34,19 @@ class SimpleLogger:
         """Record all core data for one step"""
         if not self.enable_logging:
             return
-            
-        # Initialize video recording if needed
-        if 'images' in observation and not self.recording_active:
-            self._init_video_recording(observation['images'])
         
-        # Add images to video queue
+        # Store video frames directly
         if 'images' in observation:
-            self.video_queue.append(observation['images'].copy())
+            images = observation['images']
+            num_cameras = images.shape[0]
+            
+            for cam_idx in range(num_cameras):
+                if cam_idx not in self.video_frames:
+                    self.video_frames[cam_idx] = []
+                
+                # Convert RGB to BGR and store
+                frame = cv2.cvtColor(images[cam_idx], cv2.COLOR_RGB2BGR)
+                self.video_frames[cam_idx].append(frame)
         
         # Create observation dict excluding image-related fields
         observation_data = {}
@@ -81,46 +80,44 @@ class SimpleLogger:
         
         self.data_log.append(step_data)
 
-    def _init_video_recording(self, images):
-        """Initialize video recording"""
-        if self.recording_active:
+    def _save_videos(self):
+        """Save all video frames to video files"""
+        if not self.video_frames:
             return
             
-        num_cameras = images.shape[0]
-        height, width = images.shape[1], images.shape[2]
+        print("[SimpleLogger] Saving videos...")
         
-        # Create video writer for each camera
-        for cam_idx in range(num_cameras):
+        for cam_idx, frames in self.video_frames.items():
+            if len(frames) == 0:
+                continue
+                
             video_path = os.path.join(self.record_dir, f'camera_{cam_idx+1}.mp4')
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(video_path, fourcc, self.video_fps, (width, height))
-            if writer.isOpened():
-                self.video_writers[cam_idx] = writer
-            else:
-                print(f"[SimpleLogger] Failed to create video writer for camera {cam_idx+1}")
-        
-        # Start video recording thread
-        if self.video_writers:
-            self.recording_active = True
-            self.video_thread = threading.Thread(target=self._video_worker, daemon=True)
-            self.video_thread.start()
-            print(f"[SimpleLogger] Video recording started for {len(self.video_writers)} cameras")
-
-    def _video_worker(self):
-        """Video recording worker thread"""
-        while self.recording_active:
-            if len(self.video_queue) > 0:
-                try:
-                    images = self.video_queue.popleft()
-                    for cam_idx, writer in self.video_writers.items():
-                        if cam_idx < len(images):
-                            # Convert RGB to BGR
-                            frame = cv2.cvtColor(images[cam_idx], cv2.COLOR_RGB2BGR)
-                            writer.write(frame)
-                except:
-                    pass  # Ignore video recording errors
-            else:
-                time.sleep(0.01)
+            
+            try:
+                # Convert frames back to RGB for imageio
+                rgb_frames = []
+                for frame in frames:
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    rgb_frames.append(rgb_frame)
+                
+                writer = imageio.get_writer(
+                    video_path, 
+                    fps=self.video_fps,
+                    quality=8,
+                    format='FFMPEG',
+                    codec='libx264',
+                    pixelformat='yuv420p',
+                )
+                
+                for frame in rgb_frames:
+                    writer.append_data(frame)
+                writer.close()
+                
+                print(f"[SimpleLogger] Saved camera {cam_idx+1} video: {len(frames)} frames")
+                
+            except Exception as e_imageio:
+                print(f"[SimpleLogger] imageio failed ({e_imageio}), trying OpenCV...")
+            
 
     def save_and_cleanup(self):
         """Save data and cleanup resources"""
@@ -129,14 +126,8 @@ class SimpleLogger:
             
         print("[SimpleLogger] Saving data...")
         
-        # Stop video recording
-        self.recording_active = False
-        if self.video_thread and self.video_thread.is_alive():
-            self.video_thread.join(timeout=2)
-        
-        # Close video files
-        for writer in self.video_writers.values():
-            writer.release()
+        # Save videos
+        self._save_videos()
         
         # Save core data
         if self.data_log:
@@ -147,7 +138,8 @@ class SimpleLogger:
             # Save summary
             summary = {
                 'total_steps': len(self.data_log),
-                'cameras_recorded': len(self.video_writers),
+                'cameras_recorded': len(self.video_frames),
+                'video_frames': {f'camera_{k+1}': len(v) for k, v in self.video_frames.items()},
                 'session_duration': self.data_log[-1]['timestamp'] - self.data_log[0]['timestamp'] if self.data_log else 0,
                 'saved_at': datetime.now().isoformat()
             }
@@ -156,6 +148,9 @@ class SimpleLogger:
                 json.dump(summary, f, indent=2)
             
             print(f"[SimpleLogger] Saved {len(self.data_log)} steps of data")
+        
+        # Clear video frames to free memory
+        self.video_frames.clear()
 
 
 class VLAClient:
