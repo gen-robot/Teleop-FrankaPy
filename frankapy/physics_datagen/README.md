@@ -15,7 +15,7 @@ cd physics_datagen
 # sine is the best for our panda robot
 trajectory_type='sine'  # one of step, sine, triangle, combined
 output="csv/test_joint"
-for joint_idx in 6
+for joint_idx in {0..6}
 do
     python sysid_joint_traj_gen.py \
         --ctrl_freq 10 \
@@ -31,6 +31,6 @@ output="csv/test_joint"
 python sysid_joint_traj_gen.py \
     --ctrl_freq 10 \
     --trajectory_type "${trajectory_type}" \
-    --joint_idx 6 \
+    --joint_idx 0 \
     --output "${output}"
 ```
