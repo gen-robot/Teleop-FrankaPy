@@ -622,6 +622,32 @@ class TwoPhaseDataGenerator:
         self.robot.stop_skill()
         print("[INFO] Base episode replay completed.")
 
+    def robot_init_for_episode(self, is_first_episode=False):
+        """
+        Initialize robot for new episode (like data_replayer.py and data_collection.py).
+
+        Args:
+            is_first_episode: If True, performs full initialization. If False, assumes already at home.
+        """
+        if is_first_episode:
+            print("Performing initial robot setup...")
+            self.robot.reset_joints()
+            self.robot.open_gripper()
+            print("Moving to home pose...")
+            self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=False,
+                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                               ignore_virtual_walls=True)
+
+        # Always ask for user confirmation before starting episode
+        input("[INFO] Press enter to start episode generation")
+
+        # Start dynamic skill with very long buffer time (like original data collection)
+        self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True,
+                           buffer_time=100000000, skill_desc='MOVE',
+                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                           ignore_virtual_walls=True)
+        print("Robot initialized and ready for episode generation.")
+
     def generate_episode(self, base_episode_idx=0):
         """
         Generate a single new episode using the two-phase approach.
@@ -638,17 +664,6 @@ class TwoPhaseDataGenerator:
             # Clear previous data
             self.data_collector.clear_data()
 
-            # Initialize robot (exactly like original data collection)
-            print("Initializing robot...")
-            self.robot.reset_joints()
-            self.robot.open_gripper()
-
-            # Start dynamic skill with very long buffer time (like original data collection)
-            self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True,
-                               buffer_time=100000000, skill_desc='MOVE',
-                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                               ignore_virtual_walls=True)
-
             # Phase 1: Random movement
             random_pose = self._generate_random_pose()
             self._execute_phase1_random_movement(random_pose, duration=5.0)
@@ -662,19 +677,35 @@ class TwoPhaseDataGenerator:
             _, start_frame_idx = self._select_random_start_pose(base_episode_data)
             self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=3.0)
 
-            # Save episode
+            print("Phase 2 completed. Stopping dynamic skill...")
+            self.robot.stop_skill()
+
+            # Save episode data immediately after Phase 2 ends
             episode_idx = self._get_next_episode_idx()
             success = self._save_episode(episode_idx)
 
             if success:
-                print(f"Successfully generated episode {episode_idx}")
-                return True
+                print(f"✅ Episode {episode_idx} data saved successfully")
             else:
-                print(f"Failed to save episode {episode_idx}")
+                print(f"❌ Failed to save episode {episode_idx}")
                 return False
+
+            # Return to home pose after saving
+            print("Returning to home pose...")
+            self.robot.goto_pose(FC.HOME_POSE, duration=5, dynamic=False,
+                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                               ignore_virtual_walls=True)
+            print("✅ Returned to home pose")
+
+            return True
 
         except Exception as e:
             print(f"Error generating episode: {e}")
+            # Make sure to stop any running skills
+            try:
+                self.robot.stop_skill()
+            except:
+                pass
             return False
 
     def _save_episode(self, episode_idx):
@@ -745,11 +776,16 @@ def main():
         generator = TwoPhaseDataGenerator(args.base_dataset_dir, args.new_dataset_dir)
 
         print(f"Loaded {len(generator.base_episodes)} base episodes")
+        print("Ready to start episode generation.")
 
-        # Generate episodes
+        # Generate episodes with proper episode boundary handling
         successful_episodes = 0
         for i in range(args.num_episodes):
-            print(f"\n--- Generating episode {i+1}/{args.num_episodes} ---")
+            print(f"\n=== Episode {i+1}/{args.num_episodes} ===")
+
+            # Initialize robot for this episode (includes user confirmation)
+            is_first_episode = (i == 0)
+            generator.robot_init_for_episode(is_first_episode=is_first_episode)
 
             # Select base episode
             if args.random_base_episodes:
@@ -757,16 +793,28 @@ def main():
             else:
                 base_episode_idx = args.base_episode
 
-            # Generate episode
+            print(f"Using base episode {base_episode_idx} for generation")
+
+            # Generate episode (Phase 1 + Phase 2 + Save + Return to Home)
             success = generator.generate_episode(base_episode_idx)
 
             if success:
                 successful_episodes += 1
-            else:
-                print(f"Failed to generate episode {i+1}")
+                print(f"✅ Episode {i+1} completed successfully")
 
-            # Brief pause between episodes
-            time.sleep(2)
+                # Robot is now at home pose, ready for next episode or to end
+                if i < args.num_episodes - 1:  # Not the last episode
+                    print(f"Ready for next episode ({i+2}/{args.num_episodes})")
+                else:
+                    print("All episodes completed!")
+            else:
+                print(f"❌ Failed to generate episode {i+1}")
+                # Ask user if they want to continue
+                if i < args.num_episodes - 1:  # Not the last episode
+                    continue_choice = input("Continue with next episode? (y/n): ")
+                    if continue_choice.lower() != 'y':
+                        print("Episode generation stopped by user.")
+                        break
 
         print(f"\n=== Generation Complete ===")
         print(f"Successfully generated {successful_episodes}/{args.num_episodes} episodes")
