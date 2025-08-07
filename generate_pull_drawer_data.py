@@ -55,15 +55,13 @@ class TwoPhaseDataGenerator:
         # Create new dataset directory
         os.makedirs(self.new_dataset_dir, exist_ok=True)
         
-        # Workspace limits for random pose generation (based on actual pull_drawer data and Franka limits)
-        # These limits are conservative and based on the actual drawer task workspace
-        self.workspace_limits = {
-            'x': [0.35, 0.65],    # Forward/backward (around drawer area)
-            'y': [-0.3, 0.3],     # Left/right (drawer is roughly centered)
-            'z': [0.1, 0.6],      # Up/down (above table, below shoulder height)
-            'roll': [-np.pi/6, np.pi/6],    # ±30 degrees (more conservative)
-            'pitch': [-np.pi/6, np.pi/6],   # ±30 degrees (more conservative)
-            'yaw': [-np.pi/4, np.pi/4]      # ±45 degrees (reasonable range)
+        # Random pose delta limits (relative to current position)
+        # Position deltas: -0.05 to 0.05 meters in each axis
+        # Orientation deltas: -10 to 10 degrees in each axis
+        deg2rad = np.pi / 180  # Easy to change: modify degrees above, conversion happens here
+        self.random_delta_limits = {
+            'position': [-0.05, 0.05],  # ±5cm in each axis
+            'orientation': [-10 * deg2rad, 10 * deg2rad]  # ±10 degrees in each axis
         }
         
     def _load_base_episodes(self):
@@ -101,29 +99,53 @@ class TwoPhaseDataGenerator:
         return max_idx + 1
     
     def _generate_random_pose(self):
-        """Generate a random pose within the workspace limits."""
-        # Random position
-        x = np.random.uniform(self.workspace_limits['x'][0], self.workspace_limits['x'][1])
-        y = np.random.uniform(self.workspace_limits['y'][0], self.workspace_limits['y'][1])
-        z = np.random.uniform(self.workspace_limits['z'][0], self.workspace_limits['z'][1])
-        
-        # Random orientation (Euler angles)
-        roll = np.random.uniform(self.workspace_limits['roll'][0], self.workspace_limits['roll'][1])
-        pitch = np.random.uniform(self.workspace_limits['pitch'][0], self.workspace_limits['pitch'][1])
-        yaw = np.random.uniform(self.workspace_limits['yaw'][0], self.workspace_limits['yaw'][1])
-        
-        # Convert to rotation matrix
-        rotation_matrix = euler2mat(roll, pitch, yaw, 'sxyz')
-        
-        # Create RigidTransform
-        pose = RigidTransform(
-            rotation=rotation_matrix,
-            translation=np.array([x, y, z]),
+        """
+        Generate a random target pose using fixed offset from initial pose.
+        Position offset: -0.05 to 0.05m, Orientation offset: -10 to 10 degrees.
+
+        Returns:
+            RigidTransform: Target pose = initial_pose + random_offset
+        """
+        # Use initial pose as baseline (set by _ee_pose_init after robot initialization)
+        initial_position = self.init_xyz
+        initial_rotation = self.init_rotation
+
+        # Generate random position offset within limits
+        position_offset = np.array([
+            np.random.uniform(self.random_delta_limits['position'][0], self.random_delta_limits['position'][1]),
+            np.random.uniform(self.random_delta_limits['position'][0], self.random_delta_limits['position'][1]),
+            np.random.uniform(self.random_delta_limits['position'][0], self.random_delta_limits['position'][1])
+        ])
+
+        # Generate random orientation offset within limits
+        orientation_offset = np.array([
+            np.random.uniform(self.random_delta_limits['orientation'][0], self.random_delta_limits['orientation'][1]),
+            np.random.uniform(self.random_delta_limits['orientation'][0], self.random_delta_limits['orientation'][1]),
+            np.random.uniform(self.random_delta_limits['orientation'][0], self.random_delta_limits['orientation'][1])
+        ])
+
+        # Apply offset to initial pose
+        target_position = initial_position + position_offset
+
+        # Apply orientation offset
+        offset_rotation = euler2mat(orientation_offset[0], orientation_offset[1], orientation_offset[2], 'sxyz')
+        target_rotation = np.matmul(initial_rotation, offset_rotation)
+
+        # Create target pose
+        target_pose = RigidTransform(
+            rotation=target_rotation,
+            translation=target_position,
             from_frame='franka_tool',
             to_frame='world'
         )
-        
-        return pose
+
+        # Convert orientation offset back to degrees for logging
+        deg2rad = np.pi / 180
+        orientation_offset_deg = orientation_offset / deg2rad
+
+        print(f"Generated random offset: pos={position_offset}, ori_deg={orientation_offset_deg}")
+        print(f"Target pose: pos={target_position}, from initial pos={initial_position}")
+        return target_pose
     
     def _interpolate_trajectory(self, start_pose, end_pose, duration, num_points=None):
         """
@@ -670,7 +692,7 @@ class TwoPhaseDataGenerator:
 
             base_episode_data = self.base_episodes[base_episode_idx]
             _, start_frame_idx = self._select_random_start_pose(base_episode_data)
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=3.0)
+            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=5.0)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
