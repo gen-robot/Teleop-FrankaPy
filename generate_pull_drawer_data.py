@@ -432,6 +432,12 @@ class TwoPhaseDataGenerator:
                            cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
                            ignore_virtual_walls=True)
 
+        # Wait for dynamic skill to initialize properly
+        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
+
+        # Stop the positioning skill before executing base episode sequence
+        self.robot.stop_skill()
+
         # Execute the rest of the base episode using delta actions
         self._execute_base_episode_sequence(base_episode_data, start_frame_idx)
 
@@ -554,6 +560,16 @@ class TwoPhaseDataGenerator:
 
         # Initialize pose tracking (like data_replayer.py ee_pose_init)
         self._ee_pose_init()
+
+        # Initialize dynamic skill for base episode execution
+        current_pose = self.robot.get_pose()
+        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
+                           buffer_time=100000000, skill_desc='BASE_EPISODE_EXECUTION',
+                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                           ignore_virtual_walls=True)
+
+        # Wait for dynamic skill to initialize
+        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
         control_rate = rospy.Rate(self.control_frequency)
         init_time = rospy.Time.now().to_time()
