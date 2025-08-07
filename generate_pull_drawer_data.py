@@ -228,7 +228,7 @@ class TwoPhaseDataGenerator:
         current_rotation = current_pose.rotation
         target_rotation = target_pose.rotation
         relative_rotation = target_rotation @ current_rotation.T
-        total_euler_delta = mat2euler(relative_rotation, 'sxyz')
+        total_euler_delta = np.array(mat2euler(relative_rotation, 'sxyz'), dtype=np.float64)
 
         # Generate smooth delta sequence
         num_steps = max(int(duration * self.control_frequency), 2)
@@ -242,7 +242,7 @@ class TwoPhaseDataGenerator:
 
         for weight in weights:
             # Calculate incremental delta for this step
-            delta_weight = weight - prev_weight
+            delta_weight = float(weight - prev_weight)
 
             delta_position = total_position_delta * delta_weight
             delta_euler = total_euler_delta * delta_weight
