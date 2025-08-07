@@ -6,7 +6,7 @@ Phase 1: Random initial movement to a random pose within operational limits
 Phase 2: Execute base episode from selected random pose from first 5 frames
 
 Usage:
-    python generate_pull_drawer_data.py --num_episodes 10 --base_episode 0
+    python generate_pull_drawer_data.py --num_episodes 5 --base_episode 13
 """
 
 import os
@@ -44,6 +44,7 @@ class TwoPhaseDataGenerator:
         self.control_frequency = 5  # Hz, same as original data collection
         
         # Initialize robot and cameras
+        # FrankaArm will handle ROS node initialization automatically
         self.robot = FrankaArm()
         self.cameras = RealsenseAPI()
         self.data_collector = VLADataCollector(self.robot, self.cameras)
@@ -239,7 +240,7 @@ class TwoPhaseDataGenerator:
         delta_actions = []
         prev_weight = 0
 
-        for i, weight in enumerate(weights):
+        for weight in weights:
             # Calculate incremental delta for this step
             delta_weight = weight - prev_weight
 
@@ -753,8 +754,8 @@ def get_arguments():
     parser = argparse.ArgumentParser(description="Two-phase trajectory data generation for pull_drawer dataset.")
     parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to generate.")
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2.")
-    parser.add_argument("--base_dataset_dir", type=str, default="pull_drawer", help="Directory containing base dataset.")
-    parser.add_argument("--new_dataset_dir", type=str, default="pull_drawer_new", help="Directory to save new episodes.")
+    parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing base dataset.")
+    parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
     return parser.parse_args()
 
@@ -768,11 +769,8 @@ def main():
     print(f"New dataset: {args.new_dataset_dir}")
     print(f"Episodes to generate: {args.num_episodes}")
 
-    # Initialize ROS node
-    rospy.init_node('two_phase_data_generator', anonymous=True)
-
     try:
-        # Initialize generator
+        # Initialize generator (FrankaArm will handle ROS node initialization)
         generator = TwoPhaseDataGenerator(args.base_dataset_dir, args.new_dataset_dir)
 
         print(f"Loaded {len(generator.base_episodes)} base episodes")
