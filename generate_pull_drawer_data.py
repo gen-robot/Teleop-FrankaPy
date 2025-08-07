@@ -623,30 +623,24 @@ class TwoPhaseDataGenerator:
         self.robot.stop_skill()
         print("[INFO] Base episode replay completed.")
 
-    def robot_init_for_episode(self, is_first_episode=False):
+    def robot_init_for_episode(self):
         """
-        Initialize robot for new episode (like data_replayer.py and data_collection.py).
-
-        Args:
-            is_first_episode: If True, performs full initialization. If False, assumes already at home.
+        Initialize robot for new episode (exactly like data_collection.py).
         """
-        if is_first_episode:
-            print("Performing initial robot setup...")
-            self.robot.reset_joints()
-            self.robot.open_gripper()
-            print("Moving to home pose...")
-            self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=False,
-                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                               ignore_virtual_walls=True)
+        print("Initializing robot for new episode...")
+        # Exactly like data_collection.py main()
+        self.robot.reset_joints()
+        self.robot.open_gripper()
 
-        # Always ask for user confirmation before starting episode
-        input("[INFO] Press enter to start episode generation")
-
-        # Start dynamic skill with very long buffer time (like original data collection)
+        # Start dynamic skill (exactly like data_collection.py)
         self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True,
                            buffer_time=100000000, skill_desc='MOVE',
                            cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
                            ignore_virtual_walls=True)
+
+        # Initialize pose tracking from current position (exactly like data_collection.py)
+        self._ee_pose_init()
+
         print("Robot initialized and ready for episode generation.")
 
     def generate_episode(self, base_episode_idx=0):
@@ -690,13 +684,6 @@ class TwoPhaseDataGenerator:
             else:
                 print(f"❌ Failed to save episode {episode_idx}")
                 return False
-
-            # Return to home pose after saving
-            print("Returning to home pose...")
-            self.robot.goto_pose(FC.HOME_POSE, duration=5, dynamic=False,
-                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                               ignore_virtual_walls=True)
-            print("✅ Returned to home pose")
 
             return True
 
@@ -776,14 +763,16 @@ def main():
         print(f"Loaded {len(generator.base_episodes)} base episodes")
         print("Ready to start episode generation.")
 
-        # Generate episodes with proper episode boundary handling
+        # Generate episodes (simple like data_collection.py)
         successful_episodes = 0
         for i in range(args.num_episodes):
             print(f"\n=== Episode {i+1}/{args.num_episodes} ===")
 
-            # Initialize robot for this episode (includes user confirmation)
-            is_first_episode = (i == 0)
-            generator.robot_init_for_episode(is_first_episode=is_first_episode)
+            # Initialize robot for this episode (exactly like data_collection.py)
+            generator.robot_init_for_episode()
+
+            # Ask user to start episode
+            input("[INFO] Press enter to start episode generation")
 
             # Select base episode
             if args.random_base_episodes:
@@ -793,18 +782,12 @@ def main():
 
             print(f"Using base episode {base_episode_idx} for generation")
 
-            # Generate episode (Phase 1 + Phase 2 + Save + Return to Home)
+            # Generate episode (Phase 1 + Phase 2 + Save)
             success = generator.generate_episode(base_episode_idx)
 
             if success:
                 successful_episodes += 1
                 print(f"✅ Episode {i+1} completed successfully")
-
-                # Robot is now at home pose, ready for next episode or to end
-                if i < args.num_episodes - 1:  # Not the last episode
-                    print(f"Ready for next episode ({i+2}/{args.num_episodes})")
-                else:
-                    print("All episodes completed!")
             else:
                 print(f"❌ Failed to generate episode {i+1}")
                 # Ask user if they want to continue
