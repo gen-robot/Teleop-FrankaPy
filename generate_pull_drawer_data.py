@@ -6,7 +6,7 @@ Phase 1: Random initial movement to a random pose within operational limits
 Phase 2: Execute base episode from selected random pose from first 5 frames
 
 Usage:
-    python generate_pull_drawer_data.py --num_episodes 5 --base_episode 13
+    python3 generate_pull_drawer_data.py --num_episodes 5 --base_episode 13
 """
 
 import os
@@ -223,11 +223,24 @@ class TwoPhaseDataGenerator:
         # Initialize pose tracking (like original data collection)
         self._ee_pose_init()
 
+        # Ensure dynamic skill is active for delta action execution
+        current_pose = self.robot.get_pose()
+        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
+                           buffer_time=100000000, skill_desc='PHASE1_RANDOM_MOVEMENT',
+                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                           ignore_virtual_walls=True)
+
+        # Wait for dynamic skill to initialize
+        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
+
         # Generate delta action sequence to reach target pose
         delta_actions = self._generate_delta_action_sequence(target_pose, duration)
 
         # Execute delta actions with data recording (like original data collection)
         self._execute_delta_actions_with_recording(delta_actions, "Phase 1: Random movement")
+
+        # Stop the dynamic skill after phase 1
+        self.robot.stop_skill()
 
         print("Phase 1 completed successfully")
 
@@ -422,20 +435,21 @@ class TwoPhaseDataGenerator:
 
         # Phase connection: Move to starting pose using delta actions (consistent with Phase 1)
         print("Phase connection: Moving to base episode starting pose using delta actions...")
-        connection_delta_actions = self._generate_delta_action_sequence(target_pose, duration)
-        self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 2: Moving to base episode start")
 
-        # Initialize dynamic skill for base episode execution (like data_replayer.py)
-        # Use very long buffer time to ensure skill doesn't timeout during execution
-        self.robot.goto_pose(target_pose, duration=10, dynamic=True,
-                           buffer_time=100000000, skill_desc='BASE_EPISODE_REPLAY',
+        # Initialize dynamic skill for phase connection movement
+        current_pose = self.robot.get_pose()
+        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
+                           buffer_time=100000000, skill_desc='PHASE2_CONNECTION',
                            cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
                            ignore_virtual_walls=True)
 
-        # Wait for dynamic skill to initialize properly
+        # Wait for dynamic skill to initialize
         time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
-        # Stop the positioning skill before executing base episode sequence
+        connection_delta_actions = self._generate_delta_action_sequence(target_pose, duration)
+        self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 2: Moving to base episode start")
+
+        # Stop the connection movement skill
         self.robot.stop_skill()
 
         # Execute the rest of the base episode using delta actions
@@ -697,6 +711,9 @@ class TwoPhaseDataGenerator:
             # Clear previous data
             self.data_collector.clear_data()
 
+            # Stop the initialization skill before starting Phase 1
+            self.robot.stop_skill()
+
             # Phase 1: Random movement
             random_pose = self._generate_random_pose()
             self._execute_phase1_random_movement(random_pose, duration=5.0)
@@ -708,7 +725,7 @@ class TwoPhaseDataGenerator:
 
             base_episode_data = self.base_episodes[base_episode_idx]
             _, start_frame_idx = self._select_random_start_pose(base_episode_data)
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=5.0)
+            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=3.0)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
