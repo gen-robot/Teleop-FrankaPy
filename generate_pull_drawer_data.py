@@ -219,7 +219,7 @@ class ThreePhaseDataGenerator:
         """
         Phase 0: Execute smooth movement to random pose WITHOUT recording data.
         This is the initialization phase that moves from HOME_POSE to random pose.
-        Uses simple blocking movement to avoid complexity - no delta actions needed.
+        Uses delta action interpolation with HOME_POSE as baseline (established at start).
 
         Args:
             target_pose: Target RigidTransform to move to
@@ -229,17 +229,31 @@ class ThreePhaseDataGenerator:
         print(f"Target position: {target_pose.translation}")
         print(f"Target orientation (euler): {mat2euler(target_pose.rotation, 'sxyz')}")
 
-        # Use simple blocking movement - no pose tracking initialization needed here
-        # This keeps Phase 0 simple and avoids interfering with Phase 1 pose tracking
-        try:
-            self.robot.goto_pose(target_pose, duration=duration, block=True,
-                               skill_desc='PHASE0_INITIALIZATION',
-                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                               ignore_virtual_walls=True)
-            print("Phase 0 completed successfully")
-        except Exception as e:
-            print(f"[WARN] Phase 0 movement failed: {e}")
-            raise
+        # CRITICAL: Initialize pose tracking baseline at HOME_POSE (start of Phase 0)
+        # This establishes HOME_POSE as the baseline for ALL subsequent delta accumulation
+        self._ee_pose_init()
+        print(f"Phase 0: Established HOME_POSE baseline at {self.command_xyz}")
+
+        # Ensure dynamic skill is active for delta action execution
+        current_pose = self.robot.get_pose()
+        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
+                           buffer_time=100000000, skill_desc='PHASE0_INITIALIZATION',
+                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                           ignore_virtual_walls=True)
+
+        # Wait for dynamic skill to initialize
+        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
+
+        # Generate delta action sequence to reach target pose
+        delta_actions = self._generate_delta_action_sequence(target_pose, duration)
+
+        # Execute delta actions WITHOUT data recording (key difference from Phase 1)
+        self._execute_delta_actions_without_recording(delta_actions, "Phase 0: Initialization movement")
+
+        # Stop the dynamic skill after phase 0
+        self.robot.stop_skill()
+
+        print("Phase 0 completed successfully")
 
     def _generate_delta_action_sequence(self, target_pose, duration):
         """
@@ -287,6 +301,77 @@ class ThreePhaseDataGenerator:
             prev_weight = weight
 
         return delta_actions
+
+    def _execute_delta_actions_without_recording(self, delta_actions, description):
+        """
+        Execute delta actions WITHOUT data recording (for Phase 0 initialization).
+        Uses same delta accumulation logic but skips data collection calls.
+
+        Args:
+            delta_actions: List of delta action dictionaries
+            description: Description for logging
+        """
+        print(f"Executing delta actions (no recording): {description}")
+
+        if len(delta_actions) < 1:
+            print("Warning: No delta actions to execute")
+            return
+
+        control_rate = rospy.Rate(self.control_frequency)
+        init_time = rospy.Time.now().to_time()
+
+        print(f"[INFO] Starting delta action execution with {len(delta_actions)} steps (no recording)...")
+
+        for i, delta_action in enumerate(delta_actions):
+            try:
+                timestamp = rospy.Time.now().to_time() - init_time
+
+                # Get delta actions for this step
+                delta_xyz = delta_action['delta_position']
+                delta_euler = delta_action['delta_euler']
+
+                # Apply delta actions to current pose (same as recorded version)
+                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2], 'sxyz')
+                self.command_xyz += delta_xyz
+                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+
+                # Create command transform
+                command_transform = RigidTransform(
+                    rotation=self.command_rotation,
+                    translation=self.command_xyz,
+                    from_frame='franka_tool',
+                    to_frame='world'
+                )
+
+                # Send pose command using sensor publishing (NO data recording)
+                pub_traj_gen_proto_msg = PosePositionSensorMessage(
+                    id=i+1, timestamp=timestamp,
+                    position=command_transform.translation, quaternion=command_transform.quaternion
+                )
+                fb_ctrlr_proto = CartesianImpedanceSensorMessage(
+                    id=i+1, timestamp=timestamp,
+                    translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
+                    rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
+                )
+                ros_pub_sensor_msg = make_sensor_group_msg(
+                    trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+                        pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
+                    feedback_controller_sensor_msg=sensor_proto2ros_msg(
+                        fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
+                )
+
+                # Publish sensor values for real-time control
+                self.robot.publish_sensor_values(ros_pub_sensor_msg)
+
+                control_rate.sleep()
+
+            except Exception as e:
+                print(f"[WARN] Delta action step {i} failed: {e}")
+                # Recover using same baseline (no _ee_pose_init call)
+                control_rate.sleep()
+                continue
+
+        print(f"[INFO] Delta action execution completed (no recording).")
 
     def _execute_delta_actions_with_recording(self, delta_actions, description):
         """
@@ -433,9 +518,8 @@ class ThreePhaseDataGenerator:
 
         print("Phase 1: Moving to base episode starting pose using delta actions...")
 
-        # CRITICAL: Initialize pose tracking baseline at start of recorded phase
-        # This establishes the baseline for delta action accumulation (like original working version)
-        self._ee_pose_init()
+        # NOTE: Pose tracking baseline already established in Phase 0 at HOME_POSE
+        # Continue using the same baseline for consistent delta accumulation
 
         # Initialize dynamic skill for phase 1 connection movement
         current_pose = self.robot.get_pose()
@@ -585,25 +669,9 @@ class ThreePhaseDataGenerator:
             print("Warning: Base episode sequence too short, skipping")
             return
 
-        # CRITICAL: Reset baseline to the selected starting pose for Phase 2
-        # The delta actions from start_frame_idx onwards were recorded relative to the pose at start_frame_idx
-        start_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        start_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
-
-        # Convert quaternion to rotation matrix (state data stores quaternions, but we need rotation matrices)
-        start_pose = RigidTransform(
-            rotation=start_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
-            translation=start_position,
-            from_frame='franka_tool',
-            to_frame='world'
-        )
-
-        print(f"[INFO] Resetting baseline to base episode start pose (frame {start_frame_idx})")
-        self.init_xyz = start_position.copy()
-        self.init_rotation = start_pose.rotation.copy()  # Now it's a proper rotation matrix
-        self.command_xyz = self.init_xyz.copy()
-        self.command_rotation = self.init_rotation.copy()
-        print(f"Phase 2 baseline set to start pose: {self.command_xyz}")
+        # NOTE: Continue using HOME_POSE baseline established in Phase 0
+        # All delta accumulation remains consistent throughout all phases
+        print(f"[INFO] Phase 2: Continuing with HOME_POSE baseline: {self.command_xyz}")
 
         # Initialize dynamic skill for base episode execution
         current_pose = self.robot.get_pose()
@@ -757,7 +825,7 @@ class ThreePhaseDataGenerator:
             self.data_collector.clear_data()
             print("[INFO] Data recording started from random pose")
 
-            # Phase 1: Connection movement (recorded) - pose tracking baseline established here
+            # Phase 1: Connection movement (recorded) - uses HOME_POSE baseline from Phase 0
             self._execute_phase1_connection(base_episode_data, start_frame_idx, duration=3.0)
 
             # Phase 2: Base episode execution (recorded) - continues from Phase 1 baseline
