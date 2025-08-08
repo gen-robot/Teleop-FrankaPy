@@ -7,7 +7,7 @@ Phase 1: Connection movement (recorded) - move from random pose to base episode 
 Phase 2: Execute base episode from selected starting pose
 
 Usage:
-    python3 generate_pull_drawer_data.py --num_episodes 5 --base_episode 13
+    python3 generate_pull_drawer_data.py --num_episodes 5 --base_episode 13   --pos_x_range -0.0 0.1 --pos_y_range -0.10 0.10 --pos_z_range 0.0 0.0
 """
 
 import os
@@ -32,13 +32,17 @@ import rospy
 
 
 class ThreePhaseDataGenerator:
-    def __init__(self, base_dataset_dir="pull_drawer", new_dataset_dir="pull_drawer_new"):
+    def __init__(self, base_dataset_dir="pull_drawer", new_dataset_dir="pull_drawer_new",
+                 pos_x_range=None, pos_y_range=None, pos_z_range=None):
         """
         Initialize the three-phase data generator.
 
         Args:
             base_dataset_dir: Directory containing the original pull_drawer dataset
             new_dataset_dir: Directory to save new generated episodes
+            pos_x_range: Position offset range for X axis [min, max] in meters
+            pos_y_range: Position offset range for Y axis [min, max] in meters
+            pos_z_range: Position offset range for Z axis [min, max] in meters
         """
         self.base_dataset_dir = base_dataset_dir
         self.new_dataset_dir = new_dataset_dir
@@ -57,11 +61,13 @@ class ThreePhaseDataGenerator:
         os.makedirs(self.new_dataset_dir, exist_ok=True)
         
         # Random pose delta limits (relative to current position)
-        # Position deltas: -0.05 to 0.05 meters in each axis
+        # Position deltas: configurable per axis
         # Orientation deltas: -10 to 10 degrees in each axis
         deg2rad = np.pi / 180  # Easy to change: modify degrees above, conversion happens here
         self.random_delta_limits = {
-            'position': [-0.05, 0.05],  # ±5cm in each axis
+            'position_x': pos_x_range if pos_x_range is not None else [-0.05, 0.05],
+            'position_y': pos_y_range if pos_y_range is not None else [-0.05, 0.05],
+            'position_z': pos_z_range if pos_z_range is not None else [-0.05, 0.05],
             'orientation': [-10 * deg2rad, 10 * deg2rad]  # ±10 degrees in each axis
         }
         
@@ -111,11 +117,11 @@ class ThreePhaseDataGenerator:
         initial_position = self.init_xyz
         initial_rotation = self.init_rotation
 
-        # Generate random position offset within limits
+        # Generate random position offset within limits (per axis)
         position_offset = np.array([
-            np.random.uniform(self.random_delta_limits['position'][0], self.random_delta_limits['position'][1]),
-            np.random.uniform(self.random_delta_limits['position'][0], self.random_delta_limits['position'][1]),
-            np.random.uniform(self.random_delta_limits['position'][0], self.random_delta_limits['position'][1])
+            np.random.uniform(self.random_delta_limits['position_x'][0], self.random_delta_limits['position_x'][1]),
+            np.random.uniform(self.random_delta_limits['position_y'][0], self.random_delta_limits['position_y'][1]),
+            np.random.uniform(self.random_delta_limits['position_z'][0], self.random_delta_limits['position_z'][1])
         ])
 
         # Generate random orientation offset within limits
@@ -830,6 +836,12 @@ def get_arguments():
     parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing base dataset.")
     parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
+
+    # Position offset ranges (in meters, per axis)
+    parser.add_argument("--pos_x_range", type=float, nargs=2, default=[-0.05, 0.05], help="Position offset range for X axis [min, max] in meters (default: -0.05 0.05)")
+    parser.add_argument("--pos_y_range", type=float, nargs=2, default=[-0.05, 0.05], help="Position offset range for Y axis [min, max] in meters (default: -0.05 0.05)")
+    parser.add_argument("--pos_z_range", type=float, nargs=2, default=[-0.05, 0.05], help="Position offset range for Z axis [min, max] in meters (default: -0.05 0.05)")
+
     return parser.parse_args()
 
 
@@ -844,20 +856,27 @@ def main():
 
     try:
         # Initialize generator (FrankaArm will handle ROS node initialization)
-        generator = ThreePhaseDataGenerator(args.base_dataset_dir, args.new_dataset_dir)
+        generator = ThreePhaseDataGenerator(
+            args.base_dataset_dir,
+            args.new_dataset_dir,
+            pos_x_range=args.pos_x_range,
+            pos_y_range=args.pos_y_range,
+            pos_z_range=args.pos_z_range
+        )
 
         print(f"Loaded {len(generator.base_episodes)} base episodes")
         print("Ready to start episode generation.")
 
-        # Generate episodes (simple like data_collection.py)
+        # Generate episodes with new flow: episode -> save -> user input -> robot init
         successful_episodes = 0
+
+        # Initialize robot for first episode
+        generator.robot_init_for_episode()
+
         for i in range(args.num_episodes):
             print(f"\n=== Episode {i+1}/{args.num_episodes} ===")
 
-            # Initialize robot for this episode (exactly like data_collection.py)
-            generator.robot_init_for_episode()
-
-            # Ask user to start episode
+            # Ask user to start episode (robot is already at HOME_POSE)
             input("[INFO] Press enter to start episode generation")
 
             # Select base episode
@@ -874,6 +893,12 @@ def main():
             if success:
                 successful_episodes += 1
                 print(f"✅ Episode {i+1} completed successfully")
+
+                # Ask user for next episode (after data is saved, before moving to home)
+                if i < args.num_episodes - 1:  # Not the last episode
+                    input("[INFO] Press enter to continue to next episode")
+                    # Initialize robot for next episode (move to HOME_POSE)
+                    generator.robot_init_for_episode()
             else:
                 print(f"❌ Failed to generate episode {i+1}")
                 # Ask user if they want to continue
@@ -882,6 +907,8 @@ def main():
                     if continue_choice.lower() != 'y':
                         print("Episode generation stopped by user.")
                         break
+                    # Initialize robot for next episode if continuing
+                    generator.robot_init_for_episode()
 
         print(f"\n=== Generation Complete ===")
         print(f"Successfully generated {successful_episodes}/{args.num_episodes} episodes")
