@@ -579,14 +579,17 @@ class ThreePhaseDataGenerator:
             print("Warning: Base episode sequence too short, skipping")
             return
 
-        # CRITICAL: Reset baseline to HOME_POSE for Phase 2 (base episodes were recorded from HOME_POSE)
-        # This is essential because base episodes contain delta actions relative to HOME_POSE
-        print("[INFO] Resetting baseline to HOME_POSE for base episode execution")
-        self.init_xyz = FC.HOME_POSE.translation
-        self.init_rotation = FC.HOME_POSE.rotation
+        # CRITICAL: Reset baseline to the selected starting pose for Phase 2
+        # The delta actions from start_frame_idx onwards were recorded relative to the pose at start_frame_idx
+        start_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
+        start_orientation = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+
+        print(f"[INFO] Resetting baseline to base episode start pose (frame {start_frame_idx})")
+        self.init_xyz = start_position.copy()
+        self.init_rotation = start_orientation.copy()
         self.command_xyz = self.init_xyz.copy()
         self.command_rotation = self.init_rotation.copy()
-        print(f"Phase 2 baseline set to HOME_POSE: {self.command_xyz}")
+        print(f"Phase 2 baseline set to start pose: {self.command_xyz}")
 
         # Initialize dynamic skill for base episode execution
         current_pose = self.robot.get_pose()
