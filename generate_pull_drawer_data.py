@@ -386,14 +386,14 @@ class ThreePhaseDataGenerator:
         """
         # Get first 5 poses from base episode
         positions = base_episode_data['state']['end_effector']['position'][:5]
-        orientations = base_episode_data['state']['end_effector']['orientation'][:5]
+        orientations_quat = base_episode_data['state']['end_effector']['orientation'][:5]
 
         # Select random index
         random_idx = np.random.randint(0, len(positions))
 
-        # Create RigidTransform
+        # Create RigidTransform (handles quaternion->matrix conversion)
         selected_pose = RigidTransform(
-            rotation=orientations[random_idx],
+            rotation=orientations_quat[random_idx],  # quaternion input
             translation=positions[random_idx],
             from_frame='franka_tool',
             to_frame='world'
@@ -416,10 +416,10 @@ class ThreePhaseDataGenerator:
 
         # Get target starting pose
         target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        target_orientation = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+        target_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
 
         target_pose = RigidTransform(
-            rotation=target_orientation,
+            rotation=target_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
             translation=target_position,
             from_frame='franka_tool',
             to_frame='world'
@@ -582,11 +582,19 @@ class ThreePhaseDataGenerator:
         # CRITICAL: Reset baseline to the selected starting pose for Phase 2
         # The delta actions from start_frame_idx onwards were recorded relative to the pose at start_frame_idx
         start_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        start_orientation = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+        start_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+
+        # Convert quaternion to rotation matrix (state data stores quaternions, but we need rotation matrices)
+        start_pose = RigidTransform(
+            rotation=start_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
+            translation=start_position,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
 
         print(f"[INFO] Resetting baseline to base episode start pose (frame {start_frame_idx})")
         self.init_xyz = start_position.copy()
-        self.init_rotation = start_orientation.copy()
+        self.init_rotation = start_pose.rotation.copy()  # Now it's a proper rotation matrix
         self.command_xyz = self.init_xyz.copy()
         self.command_rotation = self.init_rotation.copy()
         print(f"Phase 2 baseline set to start pose: {self.command_xyz}")
