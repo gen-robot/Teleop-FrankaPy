@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Two-phase trajectory generation script for extending the pull_drawer dataset.
+Three-phase trajectory generation script for extending the pull_drawer dataset.
 
-Phase 1: Random initial movement to a random pose within operational limits
-Phase 2: Execute base episode from selected random pose from first 5 frames
+Phase 0: Initialization movement (NOT recorded) - move from HOME_POSE to random pose
+Phase 1: Connection movement (recorded) - move from random pose to base episode start
+Phase 2: Execute base episode from selected starting pose
 
 Usage:
     python3 generate_pull_drawer_data.py --num_episodes 5 --base_episode 13
@@ -30,11 +31,11 @@ from frankapy.proto import PosePositionSensorMessage, CartesianImpedanceSensorMe
 import rospy
 
 
-class TwoPhaseDataGenerator:
+class ThreePhaseDataGenerator:
     def __init__(self, base_dataset_dir="pull_drawer", new_dataset_dir="pull_drawer_new"):
         """
-        Initialize the two-phase data generator.
-        
+        Initialize the three-phase data generator.
+
         Args:
             base_dataset_dir: Directory containing the original pull_drawer dataset
             new_dataset_dir: Directory to save new generated episodes
@@ -208,41 +209,31 @@ class TwoPhaseDataGenerator:
         self.command_rotation = self.init_rotation.copy()
         print(f"Initialized EE pose tracking at: {self.command_xyz}")
 
-    def _execute_phase1_random_movement(self, target_pose, duration=5.0):
+    def _execute_phase0_initialization(self, target_pose, duration=5.0):
         """
-        Phase 1: Execute smooth movement to random pose using delta actions (like original data collection).
+        Phase 0: Execute smooth movement to random pose WITHOUT recording data.
+        This is the initialization phase that moves from HOME_POSE to random pose.
+        Uses simple blocking movement to avoid complexity - no delta actions needed.
 
         Args:
             target_pose: Target RigidTransform to move to
             duration: Duration of movement in seconds
         """
-        print(f"Phase 1: Moving to random pose using delta actions...")
+        print(f"Phase 0: Moving to random pose (initialization, not recorded)...")
         print(f"Target position: {target_pose.translation}")
         print(f"Target orientation (euler): {mat2euler(target_pose.rotation, 'sxyz')}")
 
-        # Initialize pose tracking (like original data collection)
-        self._ee_pose_init()
-
-        # Ensure dynamic skill is active for delta action execution
-        current_pose = self.robot.get_pose()
-        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
-                           buffer_time=100000000, skill_desc='PHASE1_RANDOM_MOVEMENT',
-                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                           ignore_virtual_walls=True)
-
-        # Wait for dynamic skill to initialize
-        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
-
-        # Generate delta action sequence to reach target pose
-        delta_actions = self._generate_delta_action_sequence(target_pose, duration)
-
-        # Execute delta actions with data recording (like original data collection)
-        self._execute_delta_actions_with_recording(delta_actions, "Phase 1: Random movement")
-
-        # Stop the dynamic skill after phase 1
-        self.robot.stop_skill()
-
-        print("Phase 1 completed successfully")
+        # Use simple blocking movement - no pose tracking initialization needed here
+        # This keeps Phase 0 simple and avoids interfering with Phase 1 pose tracking
+        try:
+            self.robot.goto_pose(target_pose, duration=duration, block=True,
+                               skill_desc='PHASE0_INITIALIZATION',
+                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                               ignore_virtual_walls=True)
+            print("Phase 0 completed successfully")
+        except Exception as e:
+            print(f"[WARN] Phase 0 movement failed: {e}")
+            raise
 
     def _generate_delta_action_sequence(self, target_pose, duration):
         """
@@ -411,16 +402,17 @@ class TwoPhaseDataGenerator:
         print(f"Selected start pose from frame {random_idx} of base episode")
         return selected_pose, random_idx
 
-    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx, duration=3.0):
+    def _execute_phase1_connection(self, base_episode_data, start_frame_idx, duration=3.0):
         """
-        Phase 2: Execute base episode from selected starting pose using delta actions.
+        Phase 1: Move from random pose to base episode starting pose (recorded).
+        This is where data recording begins - pose tracking baseline is established here.
 
         Args:
             base_episode_data: Base episode data dictionary
             start_frame_idx: Index of the selected starting frame
             duration: Duration to move to starting pose
         """
-        print(f"Phase 2: Executing base episode from frame {start_frame_idx}...")
+        print(f"Phase 1: Moving to base episode starting pose (connection movement)...")
 
         # Get target starting pose
         target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
@@ -433,13 +425,16 @@ class TwoPhaseDataGenerator:
             to_frame='world'
         )
 
-        # Phase connection: Move to starting pose using delta actions (consistent with Phase 1)
-        print("Phase connection: Moving to base episode starting pose using delta actions...")
+        print("Phase 1: Moving to base episode starting pose using delta actions...")
 
-        # Initialize dynamic skill for phase connection movement
+        # CRITICAL: Initialize pose tracking baseline at start of recorded phase
+        # This establishes the baseline for delta action accumulation (like original working version)
+        self._ee_pose_init()
+
+        # Initialize dynamic skill for phase 1 connection movement
         current_pose = self.robot.get_pose()
         self.robot.goto_pose(current_pose, duration=10, dynamic=True,
-                           buffer_time=100000000, skill_desc='PHASE2_CONNECTION',
+                           buffer_time=100000000, skill_desc='PHASE1_CONNECTION',
                            cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
                            ignore_virtual_walls=True)
 
@@ -447,12 +442,24 @@ class TwoPhaseDataGenerator:
         time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
         connection_delta_actions = self._generate_delta_action_sequence(target_pose, duration)
-        self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 2: Moving to base episode start")
+        self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 1: Moving to base episode start")
 
         # Stop the connection movement skill
         self.robot.stop_skill()
 
-        # Execute the rest of the base episode using delta actions
+        print("Phase 1 completed successfully")
+
+    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx):
+        """
+        Phase 2: Execute base episode sequence from selected starting pose (recorded).
+
+        Args:
+            base_episode_data: Base episode data dictionary
+            start_frame_idx: Index of the selected starting frame
+        """
+        print(f"Phase 2: Executing base episode from frame {start_frame_idx}...")
+
+        # Execute the base episode using delta actions
         self._execute_base_episode_sequence(base_episode_data, start_frame_idx)
 
         print("Phase 2 completed successfully")
@@ -572,8 +579,14 @@ class TwoPhaseDataGenerator:
             print("Warning: Base episode sequence too short, skipping")
             return
 
-        # Initialize pose tracking (like data_replayer.py ee_pose_init)
-        self._ee_pose_init()
+        # CRITICAL: Reset baseline to HOME_POSE for Phase 2 (base episodes were recorded from HOME_POSE)
+        # This is essential because base episodes contain delta actions relative to HOME_POSE
+        print("[INFO] Resetting baseline to HOME_POSE for base episode execution")
+        self.init_xyz = FC.HOME_POSE.translation
+        self.init_rotation = FC.HOME_POSE.rotation
+        self.command_xyz = self.init_xyz.copy()
+        self.command_rotation = self.init_rotation.copy()
+        print(f"Phase 2 baseline set to HOME_POSE: {self.command_xyz}")
 
         # Initialize dynamic skill for base episode execution
         current_pose = self.robot.get_pose()
@@ -697,7 +710,7 @@ class TwoPhaseDataGenerator:
 
     def generate_episode(self, base_episode_idx=0):
         """
-        Generate a single new episode using the two-phase approach.
+        Generate a single new episode using the three-phase approach.
 
         Args:
             base_episode_idx: Index of base episode to use for Phase 2
@@ -708,24 +721,30 @@ class TwoPhaseDataGenerator:
         try:
             print(f"\n=== Generating new episode using base episode {base_episode_idx} ===")
 
-            # Clear previous data
-            self.data_collector.clear_data()
-
-            # Stop the initialization skill before starting Phase 1
+            # Stop the initialization skill before starting Phase 0
             self.robot.stop_skill()
 
-            # Phase 1: Random movement
+            # Phase 0: Initialization movement (NOT recorded)
             random_pose = self._generate_random_pose()
-            self._execute_phase1_random_movement(random_pose, duration=5.0)
+            self._execute_phase0_initialization(random_pose, duration=5.0)
 
-            # Phase 2: Base episode execution
+            # Get base episode data and select starting frame
             if base_episode_idx not in self.base_episodes:
                 print(f"Error: Base episode {base_episode_idx} not found!")
                 return False
 
             base_episode_data = self.base_episodes[base_episode_idx]
             _, start_frame_idx = self._select_random_start_pose(base_episode_data)
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=3.0)
+
+            # Clear previous data and start recording (robot is now at random pose)
+            self.data_collector.clear_data()
+            print("[INFO] Data recording started from random pose")
+
+            # Phase 1: Connection movement (recorded) - pose tracking baseline established here
+            self._execute_phase1_connection(base_episode_data, start_frame_idx, duration=3.0)
+
+            # Phase 2: Base episode execution (recorded) - continues from Phase 1 baseline
+            self._execute_phase2_base_episode(base_episode_data, start_frame_idx)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
@@ -774,9 +793,10 @@ class TwoPhaseDataGenerator:
                 "episode_idx": episode_idx,
                 "action_steps": len(self.data_collector.data_dict["action"]["end_effector"]["delta_position"]),
                 "instruction": "pull_drawer",
-                "generation_method": "two_phase_trajectory",
-                "phase1": "random_movement",
-                "phase2": "base_episode_execution"
+                "generation_method": "three_phase_trajectory",
+                "phase0": "initialization_movement_not_recorded",
+                "phase1": "connection_movement_recorded",
+                "phase2": "base_episode_execution_recorded"
             }
 
             metadata_path = os.path.join(episode_dir, "metadata.json")
@@ -793,7 +813,7 @@ class TwoPhaseDataGenerator:
 
 def get_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Two-phase trajectory data generation for pull_drawer dataset.")
+    parser = argparse.ArgumentParser(description="Three-phase trajectory data generation for pull_drawer dataset.")
     parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to generate.")
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2.")
     parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing base dataset.")
@@ -806,14 +826,14 @@ def main():
     """Main function to run the data generation."""
     args = get_arguments()
 
-    print("=== Two-Phase Trajectory Data Generator ===")
+    print("=== Three-Phase Trajectory Data Generator ===")
     print(f"Base dataset: {args.base_dataset_dir}")
     print(f"New dataset: {args.new_dataset_dir}")
     print(f"Episodes to generate: {args.num_episodes}")
 
     try:
         # Initialize generator (FrankaArm will handle ROS node initialization)
-        generator = TwoPhaseDataGenerator(args.base_dataset_dir, args.new_dataset_dir)
+        generator = ThreePhaseDataGenerator(args.base_dataset_dir, args.new_dataset_dir)
 
         print(f"Loaded {len(generator.base_episodes)} base episodes")
         print("Ready to start episode generation.")
@@ -837,7 +857,7 @@ def main():
 
             print(f"Using base episode {base_episode_idx} for generation")
 
-            # Generate episode (Phase 1 + Phase 2 + Save)
+            # Generate episode (Phase 0 + Phase 1 + Phase 2 + Save)
             success = generator.generate_episode(base_episode_idx)
 
             if success:
