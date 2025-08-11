@@ -186,15 +186,21 @@ class ThreePhaseDataGenerator:
         self.phase1_end = self.phase0_end + len(phase1_positions)
 
         print(f"Generated trajectory: Phase0={len(phase0_positions)}, Phase1={len(phase1_positions)}, Phase2={len(phase2_positions)} steps")
-        print(f"Phase 0: HOME_POSE → Random pose (not recorded)")
+        print(f"Phase 0: Current robot pose → Random pose (not recorded)")
         print(f"Phase 1: Random pose → Base episode start (recorded)")
         print(f"Phase 2: Execute base episode (recorded)")
 
         return complete_positions, complete_eulers, complete_grippers
 
     def _generate_phase0_sequence(self, random_pose):
-        """Generate Phase 0: HOME_POSE to random pose (initialization, not recorded)"""
-        start_pose = FC.HOME_POSE
+        """Generate Phase 0: Current robot pose to random pose (initialization, not recorded)"""
+        # Use CURRENT robot pose as start (not HOME_POSE)
+        start_pose = RigidTransform(
+            rotation=self.init_rotation,
+            translation=self.init_xyz,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
         target_pose = random_pose
         duration = 5.0
         num_steps = int(duration * self.control_frequency)
@@ -311,8 +317,11 @@ class ThreePhaseDataGenerator:
         """
         print(f"Executing complete trajectory with {len(position_sequence)} steps...")
 
-        # CRITICAL: Single baseline establishment (like data replayer)
-        self._ee_pose_init()
+        # CRITICAL: Single baseline establishment (already done before trajectory generation)
+        # Baseline was established using current robot pose before trajectory generation
+        self.command_xyz = self.init_xyz.copy()
+        self.command_rotation = self.init_rotation.copy()
+        print(f"Using established baseline at: {self.command_xyz}")
 
         # Initialize execution
         step = 0
@@ -469,14 +478,17 @@ class ThreePhaseDataGenerator:
             # Stop the initialization skill before starting Phase 0
             self.robot.stop_skill()
 
-            # Robot should now be at HOME_POSE, establish baseline for random pose generation
-            self._ee_pose_init()  # This sets init_xyz to current pose (should be HOME_POSE)
+            # Robot should now be at current pose, establish baseline for random pose generation
+            current_pose = self.robot.get_pose()
+            self.init_xyz = current_pose.translation
+            self.init_rotation = current_pose.rotation
 
-            # Generate random pose for Phase 0 target (robot is now at HOME_POSE)
+            # Generate random pose for Phase 0 target (using CURRENT robot pose as baseline)
             random_pose = self._generate_random_pose()
             print(f"Generated random target pose for Phase 0")
-            print(f"Initial pose (HOME_POSE): {self.init_xyz}")
+            print(f"Current robot pose: {self.init_xyz}")
             print(f"Random target pose: {random_pose.translation}")
+            print(f"Position offset: {random_pose.translation - self.init_xyz}")
 
             # Get base episode data
             if base_episode_idx not in self.base_episodes:
