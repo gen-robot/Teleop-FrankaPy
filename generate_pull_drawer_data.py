@@ -482,39 +482,43 @@ class ThreePhaseDataGenerator:
         # Select random index
         random_idx = np.random.randint(0, len(positions))
 
+        # Debug: Check the raw quaternion data
+        raw_quat = orientations_quat[random_idx]
+        print(f"Raw quaternion from data (frame {random_idx}): {raw_quat}")
+        print(f"Raw quaternion norm: {np.linalg.norm(raw_quat)}")
+
+        # Ensure quaternion is normalized before creating RigidTransform
+        normalized_quat = raw_quat / np.linalg.norm(raw_quat)
+        print(f"Normalized quaternion: {normalized_quat}")
+
         # Create RigidTransform (handles quaternion->matrix conversion)
         selected_pose = RigidTransform(
-            rotation=orientations_quat[random_idx],  # quaternion input
+            rotation=normalized_quat,  # Use normalized quaternion
             translation=positions[random_idx],
             from_frame='franka_tool',
             to_frame='world'
         )
 
         print(f"Selected start pose from frame {random_idx} of base episode")
+        print(f"RigidTransform quaternion: {selected_pose.quaternion}")
         return selected_pose, random_idx
 
-    def _execute_phase1_connection(self, base_episode_data, start_frame_idx, duration=3.0):
+    def _execute_phase1_connection(self, target_pose, duration=3.0):
         """
         Phase 1: Move from random pose to base episode starting pose (recorded).
         This is where data recording begins - pose tracking baseline is established here.
 
         Args:
-            base_episode_data: Base episode data dictionary
-            start_frame_idx: Index of the selected starting frame
+            target_pose: Pre-selected target pose (RigidTransform)
             duration: Duration to move to starting pose
         """
         print(f"Phase 1: Moving to base episode starting pose (connection movement)...")
 
-        # Get target starting pose
-        target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        target_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
-
-        target_pose = RigidTransform(
-            rotation=target_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
-            translation=target_position,
-            from_frame='franka_tool',
-            to_frame='world'
-        )
+        # Use the pre-selected target pose directly
+        print(f"Phase 1 - Using pre-selected target pose:")
+        print(f"Phase 1 - Target position: {target_pose.translation}")
+        print(f"Phase 1 - Target quaternion: {target_pose.quaternion}")
+        print(f"Phase 1 - Target rotation matrix:\n{target_pose.rotation}")
 
         print("Phase 1: Moving to base episode starting pose using delta actions...")
 
@@ -539,7 +543,7 @@ class ThreePhaseDataGenerator:
 
         print("Phase 1 completed successfully")
 
-    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx, duration=3.0):
+    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx, target_pose, duration=3.0):
         """
         Phase 2: Execute base episode from selected starting pose (recorded).
         Includes connection movement to ensure precise alignment with base episode start.
@@ -547,26 +551,31 @@ class ThreePhaseDataGenerator:
         Args:
             base_episode_data: Base episode data dictionary
             start_frame_idx: Index of the selected starting frame
+            target_pose: Pre-selected target pose (RigidTransform)
             duration: Duration to move to starting pose
         """
         print(f"Phase 2: Executing base episode from frame {start_frame_idx}...")
 
-        # Get target starting pose
-        target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        target_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
-
-        target_pose = RigidTransform(
-            rotation=target_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
-            translation=target_position,
-            from_frame='franka_tool',
-            to_frame='world'
-        )
+        # Use the same pre-selected target pose as Phase 1
+        print(f"Phase 2 - Using same target pose as Phase 1:")
+        print(f"Phase 2 - Target position: {target_pose.translation}")
+        print(f"Phase 2 - Target quaternion: {target_pose.quaternion}")
+        print(f"Phase 2 - Target rotation matrix:\n{target_pose.rotation}")
 
         # Phase 2 connection: Move to starting pose using delta actions (ensures precise alignment)
         print("Phase 2 connection: Moving to base episode starting pose using delta actions...")
 
         # Initialize dynamic skill for phase 2 connection movement
         current_pose = self.robot.get_pose()
+        print(f"Phase 2 - Current robot pose before connection:")
+        print(f"  Position: {current_pose.translation}")
+        print(f"  Quaternion: {current_pose.quaternion}")
+        print(f"  Rotation matrix:\n{current_pose.rotation}")
+
+        # Calculate pose difference
+        pos_diff = target_pose.translation - current_pose.translation
+        print(f"Phase 2 - Position difference (target - current): {pos_diff}")
+        print(f"Phase 2 - Position difference magnitude: {np.linalg.norm(pos_diff)}")
         self.robot.goto_pose(current_pose, duration=10, dynamic=True,
                            buffer_time=100000000, skill_desc='PHASE2_CONNECTION',
                            cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
@@ -850,17 +859,20 @@ class ThreePhaseDataGenerator:
                 return False
 
             base_episode_data = self.base_episodes[base_episode_idx]
-            _, start_frame_idx = self._select_random_start_pose(base_episode_data)
+            selected_start_pose, start_frame_idx = self._select_random_start_pose(base_episode_data)
+            print(f"Selected start pose - Position: {selected_start_pose.translation}")
+            print(f"Selected start pose - Quaternion: {selected_start_pose.quaternion}")
+            print(f"Selected start pose - Rotation matrix:\n{selected_start_pose.rotation}")
 
             # Clear previous data and start recording (robot is now at random pose)
             self.data_collector.clear_data()
             print("[INFO] Data recording started from random pose")
 
             # Phase 1: Connection movement (recorded) - uses HOME_POSE baseline from Phase 0
-            self._execute_phase1_connection(base_episode_data, start_frame_idx, duration=3.0)
+            self._execute_phase1_connection(selected_start_pose, duration=3.0)
 
             # Phase 2: Base episode execution (recorded) - includes connection movement for precise alignment
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=3.0)
+            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, selected_start_pose, duration=3.0)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
