@@ -269,6 +269,19 @@ class ThreePhaseDataGenerator:
         self.command_rotation = self.init_rotation.copy()
         print(f"Initialized EE pose tracking at: {self.command_xyz}")
 
+    def _ee_pose_init_like_replayer(self):
+        """
+        Initialize pose tracking exactly like data_replayer.py for maximum compatibility.
+        This is the proven method that ensures accurate pose tracking.
+        """
+        time.sleep(0.5)
+        pose = self.robot.get_pose()
+        self.init_xyz = pose.translation
+        self.init_rotation = pose.rotation
+        self.command_xyz = self.init_xyz  # Note: data_replayer doesn't use .copy()
+        self.command_rotation = self.init_rotation  # Note: data_replayer doesn't use .copy()
+        print(f"[DATA_REPLAYER_STYLE] Initialized EE pose tracking at: {self.command_xyz}")
+
     def _execute_phase0_initialization(self, target_pose, duration=5.0):
         """
         Phase 0: Execute smooth movement to random pose WITHOUT recording data.
@@ -437,7 +450,8 @@ class ThreePhaseDataGenerator:
 
             except Exception as e:
                 print(f"[WARN] Delta action step {i} failed: {e}")
-                # Recover using same baseline (no _ee_pose_init call)
+                # FIXED: Recover like data_replayer.py - always re-establish baseline
+                self._ee_pose_init()
                 control_rate.sleep()
                 continue
 
@@ -692,10 +706,11 @@ class ThreePhaseDataGenerator:
         relative_euler = mat2euler(relative_rotation, 'sxyz')
         print(f"Orientation discrepancy (euler): {relative_euler}")
 
-        # Re-establish baseline at current robot pose for accurate data recording
-        self._ee_pose_init()
-        print(f"Phase 2: New baseline established at: {self.command_xyz}")
-        print("Phase 2: This ensures recorded trajectory matches actual robot execution")
+        # CRITICAL FIX: Use data_replayer.py's exact approach
+        # The data replayer calls ee_pose_init() immediately before replay for accuracy
+        print("Phase 2: Using data_replayer.py's exact pose initialization approach")
+        self._ee_pose_init_like_replayer()
+        print("Phase 2: Baseline established using proven data_replayer method")
 
         # Execute the base episode using delta actions
         self._execute_base_episode_sequence(base_episode_data, start_frame_idx)
