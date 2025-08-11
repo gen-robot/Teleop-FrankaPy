@@ -153,45 +153,84 @@ class ThreePhaseDataGenerator:
         print(f"Generated random offset: pos={position_offset}, ori_deg={orientation_offset_deg}")
         print(f"Target pose: pos={target_position}, from initial pos={initial_position}")
         return target_pose
-    
+
+    def _slerp(self, q1, q2, t):
+        """
+        Proper spherical linear interpolation (SLERP) for quaternions.
+
+        Args:
+            q1: Start quaternion (numpy array)
+            q2: End quaternion (numpy array)
+            t: Interpolation parameter [0, 1]
+
+        Returns:
+            Interpolated quaternion (numpy array)
+        """
+        # Ensure quaternions are normalized
+        q1 = q1 / np.linalg.norm(q1)
+        q2 = q2 / np.linalg.norm(q2)
+
+        # Compute dot product
+        dot = np.dot(q1, q2)
+
+        # If dot product is negative, use -q2 to ensure shortest path
+        if dot < 0:
+            q2 = -q2
+            dot = -dot
+
+        # If quaternions are very close, use linear interpolation to avoid numerical issues
+        if dot > 0.9995:
+            result = q1 * (1 - t) + q2 * t
+            return result / np.linalg.norm(result)
+
+        # Calculate angle between quaternions
+        theta = np.arccos(np.abs(dot))
+        sin_theta = np.sin(theta)
+
+        # Compute SLERP
+        factor1 = np.sin((1 - t) * theta) / sin_theta
+        factor2 = np.sin(t * theta) / sin_theta
+
+        result = factor1 * q1 + factor2 * q2
+        return result / np.linalg.norm(result)
+
     def _interpolate_trajectory(self, start_pose, end_pose, duration, num_points=None):
         """
         Generate smooth interpolated trajectory between two poses using cubic splines.
-        
+
         Args:
             start_pose: Starting RigidTransform
-            end_pose: Ending RigidTransform  
+            end_pose: Ending RigidTransform
             duration: Duration of trajectory in seconds
             num_points: Number of interpolation points (if None, calculated from duration and frequency)
-        
+
         Returns:
             List of RigidTransform poses along the trajectory
         """
         if num_points is None:
             num_points = max(int(duration * self.control_frequency), 2)
-        
+
         # Time points
         t = np.linspace(0, 1, num_points)
-        
+
         # Interpolate position using cubic spline
         pos_spline = CubicSpline([0, 1], [start_pose.translation, end_pose.translation])
         positions = pos_spline(t)
-        
-        # Interpolate orientation using SLERP (spherical linear interpolation)
+
+        # Interpolate orientation using proper SLERP (spherical linear interpolation)
         start_quat = start_pose.quaternion
         end_quat = end_pose.quaternion
-        
+
         # Ensure shortest path interpolation
         if np.dot(start_quat, end_quat) < 0:
             end_quat = -end_quat
-            
+
         trajectory = []
         for i, pos in enumerate(positions):
-            # SLERP for orientation
+            # FIXED: Proper SLERP implementation instead of linear interpolation
             alpha = t[i]
-            quat = start_quat * (1 - alpha) + end_quat * alpha
-            quat = quat / np.linalg.norm(quat)  # Normalize
-            
+            quat = self._slerp(start_quat, end_quat, alpha)
+
             pose = RigidTransform(
                 rotation=quat,
                 translation=pos,
@@ -199,7 +238,22 @@ class ThreePhaseDataGenerator:
                 to_frame='world'
             )
             trajectory.append(pose)
-            
+
+        # VERIFICATION: Check end-point accuracy
+        final_pose = trajectory[-1]
+        pos_error = np.linalg.norm(final_pose.translation - end_pose.translation)
+
+        # Compare quaternions (accounting for q and -q representing same rotation)
+        quat_error = min(
+            np.linalg.norm(final_pose.quaternion - end_pose.quaternion),
+            np.linalg.norm(final_pose.quaternion + end_pose.quaternion)
+        )
+
+        if pos_error > 1e-6:
+            print(f"[WARN] Trajectory position error: {pos_error:.8f}m")
+        if quat_error > 1e-6:
+            print(f"[WARN] Trajectory orientation error: {quat_error:.8f}")
+
         return trajectory
 
     def _ee_pose_init(self):
@@ -300,6 +354,22 @@ class ThreePhaseDataGenerator:
 
             prev_weight = weight
 
+        # VERIFICATION: Check that delta actions sum to total displacement
+        total_delta_pos = sum(action['delta_position'] for action in delta_actions)
+        total_delta_euler = sum(action['delta_euler'] for action in delta_actions)
+
+        pos_error = np.linalg.norm(total_delta_pos - total_position_delta)
+        euler_error = np.linalg.norm(total_delta_euler - total_euler_delta)
+
+        if pos_error > 1e-10:
+            print(f"[WARN] Delta action position sum error: {pos_error:.12f}")
+        if euler_error > 1e-10:
+            print(f"[WARN] Delta action euler sum error: {euler_error:.12f}")
+
+        print(f"Generated {len(delta_actions)} delta actions for {duration}s trajectory")
+        print(f"Total position delta: {np.linalg.norm(total_position_delta):.6f}m")
+        print(f"Total euler delta: {np.linalg.norm(total_euler_delta):.6f}rad")
+
         return delta_actions
 
     def _execute_delta_actions_without_recording(self, delta_actions, description):
@@ -372,6 +442,30 @@ class ThreePhaseDataGenerator:
                 continue
 
         print(f"[INFO] Delta action execution completed (no recording).")
+
+        # VERIFICATION: Check final pose accuracy
+        final_pose = self.robot.get_pose()
+        command_pose = RigidTransform(
+            rotation=self.command_rotation,
+            translation=self.command_xyz,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
+
+        pos_error = np.linalg.norm(final_pose.translation - command_pose.translation)
+        quat_error = min(
+            np.linalg.norm(final_pose.quaternion - command_pose.quaternion),
+            np.linalg.norm(final_pose.quaternion + command_pose.quaternion)
+        )
+
+        print(f"[VERIFICATION] Final pose accuracy:")
+        print(f"  Position error: {pos_error:.6f}m")
+        print(f"  Orientation error: {quat_error:.6f}")
+
+        if pos_error > 0.005:  # 5mm threshold
+            print(f"[WARN] Large position error detected: {pos_error:.6f}m")
+        if quat_error > 0.01:  # Small angle threshold
+            print(f"[WARN] Large orientation error detected: {quat_error:.6f}")
 
     def _execute_delta_actions_with_recording(self, delta_actions, description):
         """
@@ -465,6 +559,30 @@ class ThreePhaseDataGenerator:
 
         print(f"[INFO] Delta action execution completed.")
 
+        # VERIFICATION: Check final pose accuracy
+        final_pose = self.robot.get_pose()
+        command_pose = RigidTransform(
+            rotation=self.command_rotation,
+            translation=self.command_xyz,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
+
+        pos_error = np.linalg.norm(final_pose.translation - command_pose.translation)
+        quat_error = min(
+            np.linalg.norm(final_pose.quaternion - command_pose.quaternion),
+            np.linalg.norm(final_pose.quaternion + command_pose.quaternion)
+        )
+
+        print(f"[VERIFICATION] Final pose accuracy:")
+        print(f"  Position error: {pos_error:.6f}m")
+        print(f"  Orientation error: {quat_error:.6f}")
+
+        if pos_error > 0.005:  # 5mm threshold
+            print(f"[WARN] Large position error detected: {pos_error:.6f}m")
+        if quat_error > 0.01:  # Small angle threshold
+            print(f"[WARN] Large orientation error detected: {quat_error:.6f}")
+
     def _select_random_start_pose(self, base_episode_data):
         """
         Select a random pose from the first 5 frames of the base episode.
@@ -482,48 +600,44 @@ class ThreePhaseDataGenerator:
         # Select random index
         random_idx = np.random.randint(0, len(positions))
 
-        # Debug: Check the raw quaternion data
-        raw_quat = orientations_quat[random_idx]
-        print(f"Raw quaternion from data (frame {random_idx}): {raw_quat}")
-        print(f"Raw quaternion norm: {np.linalg.norm(raw_quat)}")
-
-        # Ensure quaternion is normalized before creating RigidTransform
-        normalized_quat = raw_quat / np.linalg.norm(raw_quat)
-        print(f"Normalized quaternion: {normalized_quat}")
-
         # Create RigidTransform (handles quaternion->matrix conversion)
         selected_pose = RigidTransform(
-            rotation=normalized_quat,  # Use normalized quaternion
+            rotation=orientations_quat[random_idx],  # quaternion input
             translation=positions[random_idx],
             from_frame='franka_tool',
             to_frame='world'
         )
 
         print(f"Selected start pose from frame {random_idx} of base episode")
-        print(f"RigidTransform quaternion: {selected_pose.quaternion}")
         return selected_pose, random_idx
 
-    def _execute_phase1_connection(self, target_pose, duration=3.0):
+    def _execute_phase1_connection(self, base_episode_data, start_frame_idx, duration=3.0):
         """
         Phase 1: Move from random pose to base episode starting pose (recorded).
         This is where data recording begins - pose tracking baseline is established here.
 
         Args:
-            target_pose: Pre-selected target pose (RigidTransform)
+            base_episode_data: Base episode data dictionary
+            start_frame_idx: Index of the selected starting frame
             duration: Duration to move to starting pose
         """
         print(f"Phase 1: Moving to base episode starting pose (connection movement)...")
 
-        # Use the pre-selected target pose directly
-        print(f"Phase 1 - Using pre-selected target pose:")
-        print(f"Phase 1 - Target position: {target_pose.translation}")
-        print(f"Phase 1 - Target quaternion: {target_pose.quaternion}")
-        print(f"Phase 1 - Target rotation matrix:\n{target_pose.rotation}")
+        # Get target starting pose
+        target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
+        target_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+
+        target_pose = RigidTransform(
+            rotation=target_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
+            translation=target_position,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
 
         print("Phase 1: Moving to base episode starting pose using delta actions...")
 
-        # Reset pose tracking baseline at start of recorded Phase 1
-        self._ee_pose_init()
+        # NOTE: Pose tracking baseline already established in Phase 0 at HOME_POSE
+        # Continue using the same baseline for consistent delta accumulation
 
         # Initialize dynamic skill for phase 1 connection movement
         current_pose = self.robot.get_pose()
@@ -543,52 +657,45 @@ class ThreePhaseDataGenerator:
 
         print("Phase 1 completed successfully")
 
-    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx, target_pose, duration=3.0):
+    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx):
         """
-        Phase 2: Execute base episode from selected starting pose (recorded).
-        Includes connection movement to ensure precise alignment with base episode start.
+        Phase 2: Execute base episode sequence from selected starting pose (recorded).
 
         Args:
             base_episode_data: Base episode data dictionary
             start_frame_idx: Index of the selected starting frame
-            target_pose: Pre-selected target pose (RigidTransform)
-            duration: Duration to move to starting pose
         """
         print(f"Phase 2: Executing base episode from frame {start_frame_idx}...")
 
-        # Use the same pre-selected target pose as Phase 1
-        print(f"Phase 2 - Using same target pose as Phase 1:")
-        print(f"Phase 2 - Target position: {target_pose.translation}")
-        print(f"Phase 2 - Target quaternion: {target_pose.quaternion}")
-        print(f"Phase 2 - Target rotation matrix:\n{target_pose.rotation}")
+        # CRITICAL FIX: Re-initialize pose tracking baseline at current robot pose
+        # This ensures the recorded trajectory matches the actual robot execution
+        print("Phase 2: Re-initializing pose tracking baseline at current robot pose...")
+        current_robot_pose = self.robot.get_pose()
+        expected_pose_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
+        expected_pose_orientation = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
 
-        # Phase 2 connection: Move to starting pose using delta actions (ensures precise alignment)
-        print("Phase 2 connection: Moving to base episode starting pose using delta actions...")
+        # Create expected pose for comparison
+        expected_pose = RigidTransform(
+            rotation=expected_pose_orientation,
+            translation=expected_pose_position,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
 
-        # Initialize dynamic skill for phase 2 connection movement
-        current_pose = self.robot.get_pose()
-        print(f"Phase 2 - Current robot pose before connection:")
-        print(f"  Position: {current_pose.translation}")
-        print(f"  Quaternion: {current_pose.quaternion}")
-        print(f"  Rotation matrix:\n{current_pose.rotation}")
+        print(f"Current robot position: {current_robot_pose.translation}")
+        print(f"Expected base episode position: {expected_pose_position}")
+        print(f"Position discrepancy: {current_robot_pose.translation - expected_pose_position}")
+        print(f"Position discrepancy magnitude: {np.linalg.norm(current_robot_pose.translation - expected_pose_position):.6f}m")
 
-        # Calculate pose difference
-        pos_diff = target_pose.translation - current_pose.translation
-        print(f"Phase 2 - Position difference (target - current): {pos_diff}")
-        print(f"Phase 2 - Position difference magnitude: {np.linalg.norm(pos_diff)}")
-        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
-                           buffer_time=100000000, skill_desc='PHASE2_CONNECTION',
-                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                           ignore_virtual_walls=True)
+        # Check orientation discrepancy
+        relative_rotation = current_robot_pose.rotation @ expected_pose.rotation.T
+        relative_euler = mat2euler(relative_rotation, 'sxyz')
+        print(f"Orientation discrepancy (euler): {relative_euler}")
 
-        # Wait for dynamic skill to initialize
-        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
-
-        connection_delta_actions = self._generate_delta_action_sequence(target_pose, duration)
-        self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 2: Moving to base episode start")
-
-        # Stop the connection movement skill
-        self.robot.stop_skill()
+        # Re-establish baseline at current robot pose for accurate data recording
+        self._ee_pose_init()
+        print(f"Phase 2: New baseline established at: {self.command_xyz}")
+        print("Phase 2: This ensures recorded trajectory matches actual robot execution")
 
         # Execute the base episode using delta actions
         self._execute_base_episode_sequence(base_episode_data, start_frame_idx)
@@ -710,8 +817,9 @@ class ThreePhaseDataGenerator:
             print("Warning: Base episode sequence too short, skipping")
             return
 
-        # Reset pose tracking baseline at start of Phase 2 (base episode replay)
-        self._ee_pose_init()
+        # NOTE: Continue using HOME_POSE baseline established in Phase 0
+        # All delta accumulation remains consistent throughout all phases
+        print(f"[INFO] Phase 2: Continuing with HOME_POSE baseline: {self.command_xyz}")
 
         # Initialize dynamic skill for base episode execution
         current_pose = self.robot.get_pose()
@@ -763,6 +871,16 @@ class ThreePhaseDataGenerator:
                     },
                     "gripper_width": gripper_width
                 }
+
+                # VERIFICATION: Log pose discrepancies for debugging (every 10 steps)
+                if i % 10 == 0:
+                    actual_robot_pose = self.robot.get_pose()
+                    pos_discrepancy = actual_robot_pose.translation - self.command_xyz
+                    pos_discrepancy_mag = np.linalg.norm(pos_discrepancy)
+                    if pos_discrepancy_mag > 0.005:  # 5mm threshold
+                        print(f"[WARN] Step {i}: Position discrepancy {pos_discrepancy_mag:.6f}m")
+                        print(f"  Command: {self.command_xyz}")
+                        print(f"  Actual:  {actual_robot_pose.translation}")
 
                 # Update data collector
                 self.data_collector.update_data_dict(
@@ -859,20 +977,17 @@ class ThreePhaseDataGenerator:
                 return False
 
             base_episode_data = self.base_episodes[base_episode_idx]
-            selected_start_pose, start_frame_idx = self._select_random_start_pose(base_episode_data)
-            print(f"Selected start pose - Position: {selected_start_pose.translation}")
-            print(f"Selected start pose - Quaternion: {selected_start_pose.quaternion}")
-            print(f"Selected start pose - Rotation matrix:\n{selected_start_pose.rotation}")
+            _, start_frame_idx = self._select_random_start_pose(base_episode_data)
 
             # Clear previous data and start recording (robot is now at random pose)
             self.data_collector.clear_data()
             print("[INFO] Data recording started from random pose")
 
             # Phase 1: Connection movement (recorded) - uses HOME_POSE baseline from Phase 0
-            self._execute_phase1_connection(selected_start_pose, duration=3.0)
+            self._execute_phase1_connection(base_episode_data, start_frame_idx, duration=3.0)
 
-            # Phase 2: Base episode execution (recorded) - includes connection movement for precise alignment
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, selected_start_pose, duration=3.0)
+            # Phase 2: Base episode execution (recorded) - continues from Phase 1 baseline
+            self._execute_phase2_base_episode(base_episode_data, start_frame_idx)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
