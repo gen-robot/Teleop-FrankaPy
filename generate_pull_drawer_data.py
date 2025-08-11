@@ -17,8 +17,10 @@ import json
 import argparse
 import numpy as np
 import copy
+import threading
 # Removed scipy dependency - using numpy interpolation instead
 from transforms3d.euler import euler2quat, euler2mat, mat2euler
+from pynput.keyboard import Listener
 
 # FrankaPy imports
 from autolab_core import RigidTransform
@@ -47,30 +49,48 @@ class ThreePhaseDataGenerator:
         self.base_dataset_dir = base_dataset_dir
         self.new_dataset_dir = new_dataset_dir
         self.control_frequency = 5  # Hz, same as original data collection
-        
+
         # Initialize robot and cameras
         # FrankaArm will handle ROS node initialization automatically
         self.robot = FrankaArm()
         self.cameras = RealsenseAPI()
         self.data_collector = VLADataCollector(self.robot, self.cameras)
-        
+
         # Load base dataset
         self.base_episodes = self._load_base_episodes()
-        
+
         # Create new dataset directory
         os.makedirs(self.new_dataset_dir, exist_ok=True)
-        
+
         # Random pose delta limits (relative to current position)
         # Position deltas: configurable per axis
         # Orientation deltas: -10 to 10 degrees in each axis
         deg2rad = np.pi / 180  # Easy to change: modify degrees above, conversion happens here
         self.random_delta_limits = {
-            'position_x': pos_x_range if pos_x_range is not None else [-0.05, 0.05],
-            'position_y': pos_y_range if pos_y_range is not None else [-0.05, 0.05],
+            'position_x': pos_x_range if pos_x_range is not None else [-0.10, 0.10],
+            'position_y': pos_y_range if pos_y_range is not None else [-0.30, 0.0],
             'position_z': pos_z_range if pos_z_range is not None else [-0.05, 0.05],
             'orientation': [-10 * deg2rad, 10 * deg2rad]  # ±10 degrees in each axis
         }
-        
+
+        # Initialize keyboard listener for 'q' key detection (same as data collection)
+        self.quit_signal = False
+        self.listener = Listener(on_release=self.on_key_release)
+        self.listener.start()
+
+    def on_key_release(self, key):
+        """
+        Key handler for key releases (same as data collection).
+        Args:
+            key: key that was released
+        """
+        try:
+            if key.char == "q":
+                self.quit_signal = True
+                print("[INFO] 'q' key detected - aborting episode...")
+        except AttributeError:
+            pass
+
     def _load_base_episodes(self):
         """Load all base episodes from the original dataset."""
         base_episodes = {}
@@ -202,7 +222,7 @@ class ThreePhaseDataGenerator:
             to_frame='world'
         )
         target_pose = random_pose
-        duration = 5.0
+        duration = 3.0
         num_steps = int(duration * self.control_frequency)
 
         # Simple linear interpolation for Phase 0
@@ -314,6 +334,7 @@ class ThreePhaseDataGenerator:
         """
         Execute complete trajectory using data replayer methodology.
         Single baseline establishment, unified execution loop.
+        Returns True if completed successfully, False if aborted by 'q' key.
         """
         print(f"Executing complete trajectory with {len(position_sequence)} steps...")
 
@@ -333,6 +354,12 @@ class ThreePhaseDataGenerator:
         print("[INFO] Data recording will start from Phase 1")
 
         for i in range(len(position_sequence)):
+            # Check for 'q' key abort signal (same as data collection)
+            if self.quit_signal:
+                print("[INFO] Episode aborted by user ('q' key pressed)")
+                self.robot.stop_skill()
+                return False
+
             try:
                 timestamp = rospy.Time.now().to_time() - self.init_time
 
@@ -416,6 +443,7 @@ class ThreePhaseDataGenerator:
 
         self.robot.stop_skill()
         print("[INFO] Complete trajectory execution finished.")
+        return True
 
     def _ee_pose_init(self):
         """
@@ -465,6 +493,7 @@ class ThreePhaseDataGenerator:
     def generate_episode(self, base_episode_idx=0):
         """
         Generate a single new episode using the three-phase approach.
+        Handles 'q' key abort and redo functionality.
 
         Args:
             base_episode_idx: Index of base episode to use for Phase 2
@@ -472,70 +501,82 @@ class ThreePhaseDataGenerator:
         Returns:
             bool: Success status
         """
-        try:
-            print(f"\n=== Generating new episode using base episode {base_episode_idx} ===")
-
-            # Stop the initialization skill before starting Phase 0
-            self.robot.stop_skill()
-
-            # Robot should now be at current pose, establish baseline for random pose generation
-            current_pose = self.robot.get_pose()
-            self.init_xyz = current_pose.translation
-            self.init_rotation = current_pose.rotation
-
-            # Generate random pose for Phase 0 target (using CURRENT robot pose as baseline)
-            random_pose = self._generate_random_pose()
-            print(f"Generated random target pose for Phase 0")
-            print(f"Current robot pose: {self.init_xyz}")
-            print(f"Random target pose: {random_pose.translation}")
-            print(f"Position offset: {random_pose.translation - self.init_xyz}")
-
-            # Get base episode data
-            if base_episode_idx not in self.base_episodes:
-                print(f"Error: Base episode {base_episode_idx} not found!")
-                return False
-
-            base_episode_data = self.base_episodes[base_episode_idx]
-
-            # NEW UNIFIED SYSTEM: Generate complete trajectory sequences for all phases
-            position_sequence, rotation_sequence, gripper_sequence = self._generate_complete_trajectory_sequences(base_episode_data, random_pose)
-
-            # Initialize dynamic skill for entire trajectory execution
-            current_pose = self.robot.get_pose()
-            self.robot.goto_pose(current_pose, duration=10, dynamic=True,
-                               buffer_time=100000000, skill_desc='UNIFIED_TRAJECTORY_EXECUTION',
-                               cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                               ignore_virtual_walls=True)
-
-            # Wait for dynamic skill to initialize
-            time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
-
-            # Execute complete trajectory using data replayer methodology
-            self._execute_complete_trajectory(position_sequence, rotation_sequence, gripper_sequence)
-
-            print("Phase 2 completed. Stopping dynamic skill...")
-            self.robot.stop_skill()
-
-            # Save episode data immediately after Phase 2 ends
-            episode_idx = self._get_next_episode_idx()
-            success = self._save_episode(episode_idx)
-
-            if success:
-                print(f"✅ Episode {episode_idx} data saved successfully")
-            else:
-                print(f"❌ Failed to save episode {episode_idx}")
-                return False
-
-            return True
-
-        except Exception as e:
-            print(f"Error generating episode: {e}")
-            # Make sure to stop any running skills
+        while True:  # Loop for redo functionality
             try:
+                print(f"\n=== Generating new episode using base episode {base_episode_idx} ===")
+
+                # Reset quit signal for this episode attempt
+                self.quit_signal = False
+
+                # Stop the initialization skill before starting Phase 0
                 self.robot.stop_skill()
-            except:
-                pass
-            return False
+
+                # Robot should now be at current pose, establish baseline for random pose generation
+                current_pose = self.robot.get_pose()
+                self.init_xyz = current_pose.translation
+                self.init_rotation = current_pose.rotation
+
+                # Generate random pose for Phase 0 target (using CURRENT robot pose as baseline)
+                random_pose = self._generate_random_pose()
+                print(f"Generated random target pose for Phase 0")
+                print(f"Current robot pose: {self.init_xyz}")
+                print(f"Random target pose: {random_pose.translation}")
+                print(f"Position offset: {random_pose.translation - self.init_xyz}")
+
+                # Get base episode data
+                if base_episode_idx not in self.base_episodes:
+                    print(f"Error: Base episode {base_episode_idx} not found!")
+                    return False
+
+                base_episode_data = self.base_episodes[base_episode_idx]
+
+                # NEW UNIFIED SYSTEM: Generate complete trajectory sequences for all phases
+                position_sequence, rotation_sequence, gripper_sequence = self._generate_complete_trajectory_sequences(base_episode_data, random_pose)
+
+                # Initialize dynamic skill for entire trajectory execution
+                current_pose = self.robot.get_pose()
+                self.robot.goto_pose(current_pose, duration=10, dynamic=True,
+                                   buffer_time=100000000, skill_desc='UNIFIED_TRAJECTORY_EXECUTION',
+                                   cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                                   ignore_virtual_walls=True)
+
+                # Wait for dynamic skill to initialize
+                time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
+
+                # Execute complete trajectory using data replayer methodology
+                trajectory_success = self._execute_complete_trajectory(position_sequence, rotation_sequence, gripper_sequence)
+
+                print("Trajectory execution finished. Stopping dynamic skill...")
+                self.robot.stop_skill()
+
+                # Handle abort/redo logic (same as data collection)
+                if not trajectory_success:  # Episode was aborted by 'q' key
+                    print("[INFO] Episode aborted. Waiting 2.5s before redo...")
+                    time.sleep(2.5)
+                    print("[INFO] Redoing episode...")
+                    # Reset robot to home pose for redo
+                    self.robot_init_for_episode()
+                    continue  # Redo the episode
+
+                # Episode completed successfully - save data
+                episode_idx = self._get_next_episode_idx()
+                success = self._save_episode(episode_idx)
+
+                if success:
+                    print(f"✅ Episode {episode_idx} data saved successfully")
+                    return True
+                else:
+                    print(f"❌ Failed to save episode {episode_idx}")
+                    return False
+
+            except Exception as e:
+                print(f"Error generating episode: {e}")
+                # Make sure to stop any running skills
+                try:
+                    self.robot.stop_skill()
+                except:
+                    pass
+                return False
 
     def _save_episode(self, episode_idx):
         """
@@ -577,6 +618,15 @@ class ThreePhaseDataGenerator:
             print(f"Error saving episode {episode_idx}: {e}")
             return False
 
+    def cleanup(self):
+        """Clean up resources including keyboard listener."""
+        try:
+            if hasattr(self, 'listener') and self.listener:
+                self.listener.stop()
+                print("[INFO] Keyboard listener stopped")
+        except Exception as e:
+            print(f"[WARN] Error stopping keyboard listener: {e}")
+
 
 def get_arguments():
     """Parse command line arguments."""
@@ -588,8 +638,8 @@ def get_arguments():
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
 
     # Position offset ranges (in meters, per axis)
-    parser.add_argument("--pos_x_range", type=float, nargs=2, default=[-0.05, 0.05], help="Position offset range for X axis [min, max] in meters (default: -0.05 0.05)")
-    parser.add_argument("--pos_y_range", type=float, nargs=2, default=[-0.05, 0.05], help="Position offset range for Y axis [min, max] in meters (default: -0.05 0.05)")
+    parser.add_argument("--pos_x_range", type=float, nargs=2, default=[-0.1, 0.1], help="Position offset range for X axis [min, max] in meters (default: -0.05 0.05)")
+    parser.add_argument("--pos_y_range", type=float, nargs=2, default=[-0.30, 0.0], help="Position offset range for Y axis [min, max] in meters (default: -0.05 0.05)")
     parser.add_argument("--pos_z_range", type=float, nargs=2, default=[-0.05, 0.05], help="Position offset range for Z axis [min, max] in meters (default: -0.05 0.05)")
 
     return parser.parse_args()
@@ -627,7 +677,7 @@ def main():
             print(f"\n=== Episode {i+1}/{args.num_episodes} ===")
 
             # Ask user to start episode (robot is already at HOME_POSE)
-            input("[INFO] Press enter to start episode generation")
+            #input("[INFO] Press enter to start episode generation")
 
             # Select base episode
             if args.random_base_episodes:
@@ -668,6 +718,12 @@ def main():
     except Exception as e:
         print(f"Error in main: {e}")
     finally:
+        # Clean up resources
+        try:
+            if 'generator' in locals():
+                generator.cleanup()
+        except:
+            pass
         print("Shutting down...")
 
 
