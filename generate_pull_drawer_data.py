@@ -269,19 +269,6 @@ class ThreePhaseDataGenerator:
         self.command_rotation = self.init_rotation.copy()
         print(f"Initialized EE pose tracking at: {self.command_xyz}")
 
-    def _ee_pose_init_like_replayer(self):
-        """
-        Initialize pose tracking exactly like data_replayer.py for maximum compatibility.
-        This is the proven method that ensures accurate pose tracking.
-        """
-        time.sleep(0.5)
-        pose = self.robot.get_pose()
-        self.init_xyz = pose.translation
-        self.init_rotation = pose.rotation
-        self.command_xyz = self.init_xyz  # Note: data_replayer doesn't use .copy()
-        self.command_rotation = self.init_rotation  # Note: data_replayer doesn't use .copy()
-        print(f"[DATA_REPLAYER_STYLE] Initialized EE pose tracking at: {self.command_xyz}")
-
     def _execute_phase0_initialization(self, target_pose, duration=5.0):
         """
         Phase 0: Execute smooth movement to random pose WITHOUT recording data.
@@ -597,61 +584,18 @@ class ThreePhaseDataGenerator:
         if quat_error > 0.01:  # Small angle threshold
             print(f"[WARN] Large orientation error detected: {quat_error:.6f}")
 
-    def _select_random_start_pose(self, base_episode_data):
+    # REMOVED: _select_random_start_pose method - Phase 2 now starts from frame 0 like data_replayer
+
+    def _execute_phase1_connection_to_first_frame(self, first_pose, duration=3.0):
         """
-        Select a random pose from the first 5 frames of the base episode.
+        Phase 1: Move from random pose to first frame of base episode (recorded).
+        Simplified version that connects to frame 0 of base episode.
 
         Args:
-            base_episode_data: Base episode data dictionary
-
-        Returns:
-            Selected RigidTransform pose
-        """
-        # Get first 5 poses from base episode
-        positions = base_episode_data['state']['end_effector']['position'][:5]
-        orientations_quat = base_episode_data['state']['end_effector']['orientation'][:5]
-
-        # Select random index
-        random_idx = np.random.randint(0, len(positions))
-
-        # Create RigidTransform (handles quaternion->matrix conversion)
-        selected_pose = RigidTransform(
-            rotation=orientations_quat[random_idx],  # quaternion input
-            translation=positions[random_idx],
-            from_frame='franka_tool',
-            to_frame='world'
-        )
-
-        print(f"Selected start pose from frame {random_idx} of base episode")
-        return selected_pose, random_idx
-
-    def _execute_phase1_connection(self, base_episode_data, start_frame_idx, duration=3.0):
-        """
-        Phase 1: Move from random pose to base episode starting pose (recorded).
-        This is where data recording begins - pose tracking baseline is established here.
-
-        Args:
-            base_episode_data: Base episode data dictionary
-            start_frame_idx: Index of the selected starting frame
+            first_pose: First pose of base episode (frame 0)
             duration: Duration to move to starting pose
         """
-        print(f"Phase 1: Moving to base episode starting pose (connection movement)...")
-
-        # Get target starting pose
-        target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        target_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
-
-        target_pose = RigidTransform(
-            rotation=target_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
-            translation=target_position,
-            from_frame='franka_tool',
-            to_frame='world'
-        )
-
-        print("Phase 1: Moving to base episode starting pose using delta actions...")
-
-        # NOTE: Pose tracking baseline already established in Phase 0 at HOME_POSE
-        # Continue using the same baseline for consistent delta accumulation
+        print("Phase 1: Moving to first frame of base episode (connection movement)...")
 
         # Initialize dynamic skill for phase 1 connection movement
         current_pose = self.robot.get_pose()
@@ -663,7 +607,7 @@ class ThreePhaseDataGenerator:
         # Wait for dynamic skill to initialize
         time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
-        connection_delta_actions = self._generate_delta_action_sequence(target_pose, duration)
+        connection_delta_actions = self._generate_delta_action_sequence(first_pose, duration)
         self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 1: Moving to base episode start")
 
         # Stop the connection movement skill
@@ -671,51 +615,156 @@ class ThreePhaseDataGenerator:
 
         print("Phase 1 completed successfully")
 
-    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx):
+    def _execute_phase2_base_episode(self, base_episode_data):
         """
-        Phase 2: Execute base episode sequence from selected starting pose (recorded).
+        Phase 2: Execute complete base episode from frame 0 using data_replayer.py methodology.
+        This exactly replicates the data replayer's proven approach for maximum accuracy.
 
         Args:
             base_episode_data: Base episode data dictionary
-            start_frame_idx: Index of the selected starting frame
         """
-        print(f"Phase 2: Executing base episode from frame {start_frame_idx}...")
+        print("Phase 2: Executing complete base episode from frame 0 (data_replayer methodology)")
 
-        # CRITICAL FIX: Re-initialize pose tracking baseline at current robot pose
-        # This ensures the recorded trajectory matches the actual robot execution
-        print("Phase 2: Re-initializing pose tracking baseline at current robot pose...")
-        current_robot_pose = self.robot.get_pose()
-        expected_pose_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
-        expected_pose_orientation = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+        # CRITICAL: Data replayer moves to HOME_POSE before establishing baseline
+        # This ensures the starting pose is exactly correct for delta accumulation
+        # The original base episodes were recorded starting from HOME_POSE baseline
+        print("Phase 2: Moving to HOME_POSE like data_replayer.py robot_init()...")
+        print("Phase 2: This ensures delta accumulation starts from the same baseline as original data")
 
-        # Create expected pose for comparison
-        expected_pose = RigidTransform(
-            rotation=expected_pose_orientation,
-            translation=expected_pose_position,
-            from_frame='franka_tool',
-            to_frame='world'
-        )
+        # Stop any existing dynamic skill first
+        self.robot.stop_skill()
 
-        print(f"Current robot position: {current_robot_pose.translation}")
-        print(f"Expected base episode position: {expected_pose_position}")
-        print(f"Position discrepancy: {current_robot_pose.translation - expected_pose_position}")
-        print(f"Position discrepancy magnitude: {np.linalg.norm(current_robot_pose.translation - expected_pose_position):.6f}m")
+        # EXACT REPLICATION: Data replayer's robot_init() sequence
+        # Move to HOME_POSE and start dynamic skill (exactly like data_replayer.py)
+        self.robot.goto_pose(FC.HOME_POSE, duration=2, dynamic=True,
+                           buffer_time=100000000, skill_desc='PHASE2_DATA_REPLAYER_INIT',
+                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                           ignore_virtual_walls=True)
 
-        # Check orientation discrepancy
-        relative_rotation = current_robot_pose.rotation @ expected_pose.rotation.T
-        relative_euler = mat2euler(relative_rotation, 'sxyz')
-        print(f"Orientation discrepancy (euler): {relative_euler}")
+        print("Phase 2: Robot moved to HOME_POSE, establishing baseline...")
 
-        # CRITICAL FIX: Use data_replayer.py's exact approach
-        # The data replayer calls ee_pose_init() immediately before replay for accuracy
-        print("Phase 2: Using data_replayer.py's exact pose initialization approach")
-        self._ee_pose_init_like_replayer()
-        print("Phase 2: Baseline established using proven data_replayer method")
+        # EXACT REPLICATION: Data replayer calls ee_pose_init() immediately after robot_init()
+        # This establishes baseline at HOME_POSE (current robot pose)
+        self._ee_pose_init()
+        print(f"Phase 2: Baseline established at HOME_POSE: {self.command_xyz}")
 
-        # Execute the base episode using delta actions
-        self._execute_base_episode_sequence(base_episode_data, start_frame_idx)
+        # Execute the complete base episode using data replayer's exact logic
+        self._replay_base_episode_like_data_replayer(base_episode_data)
 
         print("Phase 2 completed successfully")
+
+    def _replay_base_episode_like_data_replayer(self, base_episode_data):
+        """
+        Replay base episode using EXACT data_replayer.py methodology.
+        This is a direct adaptation of data_replayer.py's replay_action() method.
+        """
+        print("Replicating data_replayer.py's exact replay logic...")
+
+        # EXACT COPY: Get sequences like data_replayer.py (always use delta mode)
+        position_sequence = base_episode_data["action"]["end_effector"]["delta_position"]
+        rotation_sequence = base_episode_data["action"]["end_effector"]["delta_euler"]
+        gripper_width_sequence = base_episode_data["action"]["end_effector"]["gripper_width"]
+
+        step = 0
+        control_rate = rospy.Rate(self.control_frequency)
+        print(f"[INFO] Starting replay data with {position_sequence.shape[0]} steps...")
+
+        # EXACT COPY: Data replayer's time initialization
+        self.init_time = rospy.Time.now().to_time()
+
+        replay_step = position_sequence.shape[0]
+
+        for i in range(replay_step):
+            pos = position_sequence[i]
+            rot = rotation_sequence[i]
+            gripper_width = gripper_width_sequence[i]
+            timestamp = rospy.Time.now().to_time() - self.init_time
+
+            # EXACT COPY: Data replayer's delta action processing
+            action = np.array([
+                pos[0], pos[1], pos[2],
+                rot[0], rot[1], rot[2],
+                gripper_width
+            ])
+
+            delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1]
+            delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2], 'sxyz')
+
+            # EXACT COPY: Data replayer's pose accumulation
+            self.command_xyz += delta_xyz
+            self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+
+            try:
+                # EXACT COPY: Data replayer's command creation and publishing
+                self.command_transform = RigidTransform(
+                    rotation=self.command_rotation,
+                    translation=self.command_xyz,
+                    from_frame='franka_tool',
+                    to_frame='world'
+                )
+                gripper_width_scaled = FC.GRIPPER_WIDTH_MAX * gripper
+
+                # EXACT COPY: Data replayer's ROS message publishing
+                pub_traj_gen_proto_msg = PosePositionSensorMessage(
+                    id=step+1, timestamp=timestamp,
+                    position=self.command_transform.translation,
+                    quaternion=self.command_transform.quaternion
+                )
+                fb_ctrlr_proto = CartesianImpedanceSensorMessage(
+                    id=step+1, timestamp=timestamp,
+                    translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
+                    rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
+                )
+                ros_pub_sensor_msg = make_sensor_group_msg(
+                    trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+                        pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
+                    feedback_controller_sensor_msg=sensor_proto2ros_msg(
+                        fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
+                )
+
+                self.robot.publish_sensor_values(ros_pub_sensor_msg)
+
+                # EXACT COPY: Data replayer's gripper control
+                current_gripper_width = self.robot.get_gripper_width()
+                if abs(gripper_width_scaled - current_gripper_width) > 0.01:
+                    grasp = True if gripper < 0.5 else False
+                    self.robot.goto_gripper(gripper_width_scaled, grasp=grasp,
+                                          force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12,
+                                          block=False, skill_desc="control_gripper")
+
+                # ADDITION: Record data (this is the key difference from data_replayer)
+                save_action = {
+                    "delta": {
+                        "position": delta_xyz,
+                        "orientation": euler2quat(delta_euler[0], delta_euler[1], delta_euler[2], 'sxyz'),
+                        "euler_angle": delta_euler,
+                    },
+                    "abs": {
+                        "position": copy.deepcopy(self.command_xyz),
+                        "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
+                    },
+                    "gripper_width": gripper
+                }
+
+                # Update data collector
+                self.data_collector.update_data_dict(
+                    instruction="pull_drawer",
+                    action=save_action,
+                    timestamp=timestamp
+                )
+
+            except Exception as e:
+                # EXACT COPY: Data replayer's error recovery
+                self._ee_pose_init()
+                control_rate.sleep()
+                print(f"[WARN] Move failed? : {e}")
+                continue
+
+            step += 1
+            control_rate.sleep()
+
+        self.robot.stop_skill()
+        print("[INFO] Data replayer methodology replay completed.")
 
     def _execute_trajectory_with_recording(self, trajectory, description):
         """
@@ -811,140 +860,7 @@ class ThreePhaseDataGenerator:
         # Stop the dynamic skill
         self.robot.stop_skill()
 
-    def _execute_base_episode_sequence(self, base_episode_data, start_frame_idx):
-        """
-        Execute the remainder of the base episode sequence using delta actions (like data_replayer.py).
-
-        Args:
-            base_episode_data: Base episode data dictionary
-            start_frame_idx: Starting frame index
-        """
-        print("Executing base episode sequence using delta actions...")
-
-        # Get original delta actions from start_frame_idx onwards (like data_replayer.py)
-        original_actions = base_episode_data['action']['end_effector']
-        delta_positions = original_actions['delta_position'][start_frame_idx:]
-        delta_eulers = original_actions['delta_euler'][start_frame_idx:]
-        delta_orientations = original_actions['delta_orientation'][start_frame_idx:]
-        gripper_widths = original_actions['gripper_width'][start_frame_idx:]
-
-        if len(delta_positions) < 1:
-            print("Warning: Base episode sequence too short, skipping")
-            return
-
-        # NOTE: Continue using HOME_POSE baseline established in Phase 0
-        # All delta accumulation remains consistent throughout all phases
-        print(f"[INFO] Phase 2: Continuing with HOME_POSE baseline: {self.command_xyz}")
-
-        # Initialize dynamic skill for base episode execution
-        current_pose = self.robot.get_pose()
-        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
-                           buffer_time=100000000, skill_desc='BASE_EPISODE_EXECUTION',
-                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
-                           ignore_virtual_walls=True)
-
-        # Wait for dynamic skill to initialize
-        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
-
-        control_rate = rospy.Rate(self.control_frequency)
-        init_time = rospy.Time.now().to_time()
-
-        print(f"[INFO] Starting base episode replay with {len(delta_positions)} steps...")
-
-        for i in range(len(delta_positions)):
-            try:
-                timestamp = rospy.Time.now().to_time() - init_time
-
-                # Get delta actions for this step
-                delta_xyz = delta_positions[i]
-                delta_euler = delta_eulers[i]
-                gripper_width = gripper_widths[i]
-
-                # Apply delta actions to current pose (like data_replayer.py)
-                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2], 'sxyz')
-                self.command_xyz += delta_xyz
-                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
-
-                # Create command transform
-                command_transform = RigidTransform(
-                    rotation=self.command_rotation,
-                    translation=self.command_xyz,
-                    from_frame='franka_tool',
-                    to_frame='world'
-                )
-
-                # Record data using original actions (same format as original)
-                save_action = {
-                    "delta": {
-                        "position": delta_xyz,
-                        "orientation": delta_orientations[i],
-                        "euler_angle": delta_euler,
-                    },
-                    "abs": {
-                        "position": copy.deepcopy(self.command_xyz),
-                        "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
-                    },
-                    "gripper_width": gripper_width
-                }
-
-                # VERIFICATION: Log pose discrepancies for debugging (every 10 steps)
-                if i % 10 == 0:
-                    actual_robot_pose = self.robot.get_pose()
-                    pos_discrepancy = actual_robot_pose.translation - self.command_xyz
-                    pos_discrepancy_mag = np.linalg.norm(pos_discrepancy)
-                    if pos_discrepancy_mag > 0.005:  # 5mm threshold
-                        print(f"[WARN] Step {i}: Position discrepancy {pos_discrepancy_mag:.6f}m")
-                        print(f"  Command: {self.command_xyz}")
-                        print(f"  Actual:  {actual_robot_pose.translation}")
-
-                # Update data collector
-                self.data_collector.update_data_dict(
-                    instruction="pull_drawer",
-                    action=save_action,
-                    timestamp=timestamp
-                )
-
-                # Send pose command using sensor publishing (exactly like data_replayer.py)
-                pub_traj_gen_proto_msg = PosePositionSensorMessage(
-                    id=i+1, timestamp=timestamp,
-                    position=command_transform.translation, quaternion=command_transform.quaternion
-                )
-                fb_ctrlr_proto = CartesianImpedanceSensorMessage(
-                    id=i+1, timestamp=timestamp,
-                    translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
-                    rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
-                )
-                ros_pub_sensor_msg = make_sensor_group_msg(
-                    trajectory_generator_sensor_msg=sensor_proto2ros_msg(
-                        pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
-                    feedback_controller_sensor_msg=sensor_proto2ros_msg(
-                        fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
-                )
-
-                # Publish sensor values for real-time control
-                self.robot.publish_sensor_values(ros_pub_sensor_msg)
-
-                # Handle gripper control (like data_replayer.py)
-                gripper_width_scaled = FC.GRIPPER_WIDTH_MAX * gripper_width
-                current_gripper_width = self.robot.get_gripper_width()
-                if abs(gripper_width_scaled - current_gripper_width) > 0.01:
-                    grasp = True if gripper_width < 0.5 else False
-                    self.robot.goto_gripper(gripper_width_scaled, grasp=grasp,
-                                          force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12,
-                                          block=False, skill_desc="control_gripper")
-
-                control_rate.sleep()
-
-            except Exception as e:
-                print(f"[WARN] Base episode step {i} failed: {e}")
-                # Recover like data_replayer.py
-                self._ee_pose_init()
-                control_rate.sleep()
-                continue
-
-        # Stop the dynamic skill
-        self.robot.stop_skill()
-        print("[INFO] Base episode replay completed.")
+    # REMOVED: _execute_base_episode_sequence method - replaced with data_replayer methodology
 
     def robot_init_for_episode(self):
         """
@@ -986,23 +902,32 @@ class ThreePhaseDataGenerator:
             random_pose = self._generate_random_pose()
             self._execute_phase0_initialization(random_pose, duration=5.0)
 
-            # Get base episode data and select starting frame
+            # Get base episode data
             if base_episode_idx not in self.base_episodes:
                 print(f"Error: Base episode {base_episode_idx} not found!")
                 return False
 
             base_episode_data = self.base_episodes[base_episode_idx]
-            _, start_frame_idx = self._select_random_start_pose(base_episode_data)
+
+            # Get first pose from base episode for Phase 1 connection
+            first_position = base_episode_data['state']['end_effector']['position'][0]
+            first_orientation = base_episode_data['state']['end_effector']['orientation'][0]
+            first_pose = RigidTransform(
+                rotation=first_orientation,
+                translation=first_position,
+                from_frame='franka_tool',
+                to_frame='world'
+            )
 
             # Clear previous data and start recording (robot is now at random pose)
             self.data_collector.clear_data()
             print("[INFO] Data recording started from random pose")
 
-            # Phase 1: Connection movement (recorded) - uses HOME_POSE baseline from Phase 0
-            self._execute_phase1_connection(base_episode_data, start_frame_idx, duration=3.0)
+            # Phase 1: Connection movement to first frame of base episode (recorded)
+            self._execute_phase1_connection_to_first_frame(first_pose, duration=3.0)
 
-            # Phase 2: Base episode execution (recorded) - continues from Phase 1 baseline
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx)
+            # Phase 2: Execute complete base episode from frame 0 using data_replayer methodology
+            self._execute_phase2_base_episode(base_episode_data)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
