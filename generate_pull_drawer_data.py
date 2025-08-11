@@ -539,15 +539,47 @@ class ThreePhaseDataGenerator:
 
         print("Phase 1 completed successfully")
 
-    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx):
+    def _execute_phase2_base_episode(self, base_episode_data, start_frame_idx, duration=3.0):
         """
-        Phase 2: Execute base episode sequence from selected starting pose (recorded).
+        Phase 2: Execute base episode from selected starting pose (recorded).
+        Includes connection movement to ensure precise alignment with base episode start.
 
         Args:
             base_episode_data: Base episode data dictionary
             start_frame_idx: Index of the selected starting frame
+            duration: Duration to move to starting pose
         """
         print(f"Phase 2: Executing base episode from frame {start_frame_idx}...")
+
+        # Get target starting pose
+        target_position = base_episode_data['state']['end_effector']['position'][start_frame_idx]
+        target_orientation_quat = base_episode_data['state']['end_effector']['orientation'][start_frame_idx]
+
+        target_pose = RigidTransform(
+            rotation=target_orientation_quat,  # RigidTransform handles quaternion->matrix conversion
+            translation=target_position,
+            from_frame='franka_tool',
+            to_frame='world'
+        )
+
+        # Phase 2 connection: Move to starting pose using delta actions (ensures precise alignment)
+        print("Phase 2 connection: Moving to base episode starting pose using delta actions...")
+
+        # Initialize dynamic skill for phase 2 connection movement
+        current_pose = self.robot.get_pose()
+        self.robot.goto_pose(current_pose, duration=10, dynamic=True,
+                           buffer_time=100000000, skill_desc='PHASE2_CONNECTION',
+                           cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
+                           ignore_virtual_walls=True)
+
+        # Wait for dynamic skill to initialize
+        time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
+
+        connection_delta_actions = self._generate_delta_action_sequence(target_pose, duration)
+        self._execute_delta_actions_with_recording(connection_delta_actions, "Phase 2: Moving to base episode start")
+
+        # Stop the connection movement skill
+        self.robot.stop_skill()
 
         # Execute the base episode using delta actions
         self._execute_base_episode_sequence(base_episode_data, start_frame_idx)
@@ -827,8 +859,8 @@ class ThreePhaseDataGenerator:
             # Phase 1: Connection movement (recorded) - uses HOME_POSE baseline from Phase 0
             self._execute_phase1_connection(base_episode_data, start_frame_idx, duration=3.0)
 
-            # Phase 2: Base episode execution (recorded) - continues from Phase 1 baseline
-            self._execute_phase2_base_episode(base_episode_data, start_frame_idx)
+            # Phase 2: Base episode execution (recorded) - includes connection movement for precise alignment
+            self._execute_phase2_base_episode(base_episode_data, start_frame_idx, duration=3.0)
 
             print("Phase 2 completed. Stopping dynamic skill...")
             self.robot.stop_skill()
