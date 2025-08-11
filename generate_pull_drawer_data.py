@@ -518,8 +518,8 @@ class ThreePhaseDataGenerator:
 
         print("Phase 1: Moving to base episode starting pose using delta actions...")
 
-        # NOTE: Pose tracking baseline already established in Phase 0 at HOME_POSE
-        # Continue using the same baseline for consistent delta accumulation
+        # Reset pose tracking baseline at start of recorded Phase 1
+        self._ee_pose_init()
 
         # Initialize dynamic skill for phase 1 connection movement
         current_pose = self.robot.get_pose()
@@ -669,9 +669,8 @@ class ThreePhaseDataGenerator:
             print("Warning: Base episode sequence too short, skipping")
             return
 
-        # NOTE: Continue using HOME_POSE baseline established in Phase 0
-        # All delta accumulation remains consistent throughout all phases
-        print(f"[INFO] Phase 2: Continuing with HOME_POSE baseline: {self.command_xyz}")
+        # Reset pose tracking baseline at start of Phase 2 (base episode replay)
+        self._ee_pose_init()
 
         # Initialize dynamic skill for base episode execution
         current_pose = self.robot.get_pose()
