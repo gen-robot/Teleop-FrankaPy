@@ -68,9 +68,9 @@ class ThreePhaseDataGenerator:
         deg2rad = np.pi / 180  # Easy to change: modify degrees above, conversion happens here
         self.random_delta_limits = {
             'position_x': pos_x_range if pos_x_range is not None else [-0.10, 0.10],
-            'position_y': pos_y_range if pos_y_range is not None else [-0.30, 0.0],
-            'position_z': pos_z_range if pos_z_range is not None else [-0.05, 0.05],
-            'orientation': [-10 * deg2rad, 10 * deg2rad]  # ±10 degrees in each axis
+            'position_y': pos_y_range if pos_y_range is not None else [-0.20, 0.0],
+            'position_z': pos_z_range if pos_z_range is not None else [-0.05, 0.10],
+            'orientation': [-15 * deg2rad, 15 * deg2rad]  # ±10 degrees in each axis
         }
 
         # Initialize keyboard listener for 'q' key detection (same as data collection)
@@ -222,7 +222,7 @@ class ThreePhaseDataGenerator:
             to_frame='world'
         )
         target_pose = random_pose
-        duration = 3.0
+        duration = 1.5
         num_steps = int(duration * self.control_frequency)
 
         # Simple linear interpolation for Phase 0
@@ -470,11 +470,81 @@ class ThreePhaseDataGenerator:
 
         pass  # All old methods removed - using unified trajectory system
 
+    def _ensure_action_client_ready(self):
+        """
+        Simplified check to ensure robot is ready for new episode.
+        """
+        import time
+
+        print("[INFO] Ensuring robot is ready for new episode...")
+
+        # Simple check using franka interface status (more reliable than action client state)
+        max_wait_time = 2.0  # seconds
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait_time:
+            try:
+                franka_status = self.robot._get_current_franka_interface_status().franka_interface_status
+                if franka_status.is_ready and not self.robot._in_skill:
+                    print("[INFO] Robot confirmed ready for new episode")
+                    return
+            except Exception as e:
+                print(f"[WARN] Error checking robot status: {e}")
+
+            time.sleep(0.1)
+
+        print("[WARN] Robot readiness timeout, but proceeding...")
+
+    def _stop_skill_safely(self):
+        """
+        Safely stop the current skill without triggering PREEMPTING/DONE race condition.
+        This replaces the problematic robot.stop_skill() method.
+        """
+        import time
+
+        print("[INFO] Safely stopping skill...")
+
+        if not self.robot._connected or not self.robot._in_skill:
+            print("[INFO] No active skill to stop")
+            return
+
+        # Cancel the goal
+        print("[INFO] Cancelling current goal...")
+        self.robot._client.cancel_goal()
+
+        # Wait for cancellation to complete WITHOUT using wait_for_result() polling
+        # This avoids the PREEMPTING/DONE race condition
+        max_wait_time = 3.0  # seconds
+        start_time = time.time()
+
+        print("[INFO] Waiting for skill cancellation to complete...")
+        while time.time() - start_time < max_wait_time:
+            # Check franka interface status instead of action client state
+            try:
+                franka_status = self.robot._get_current_franka_interface_status().franka_interface_status
+                if franka_status.is_ready:
+                    # Franka interface is ready, skill should be stopped
+                    self.robot._in_skill = False
+                    print("[INFO] Skill safely stopped (franka interface ready)")
+                    return
+            except Exception as e:
+                print(f"[WARN] Error checking franka status: {e}")
+
+            time.sleep(0.05)  # 50ms sleep to avoid tight polling
+
+        # Timeout reached, force reset the skill state
+        print("[WARN] Skill stop timeout, forcing state reset...")
+        self.robot._in_skill = False
+
     def robot_init_for_episode(self):
         """
         Initialize robot for new episode (exactly like data_collection.py).
         """
         print("Initializing robot for new episode...")
+
+        # CRITICAL FIX: Ensure action client is in clean state before starting new episode
+        self._ensure_action_client_ready()
+
         # Exactly like data_collection.py main()
         self.robot.reset_joints()
         self.robot.open_gripper()
@@ -547,7 +617,8 @@ class ThreePhaseDataGenerator:
                 trajectory_success = self._execute_complete_trajectory(position_sequence, rotation_sequence, gripper_sequence)
 
                 print("Trajectory execution finished. Stopping dynamic skill...")
-                self.robot.stop_skill()
+                # CRITICAL FIX: Use custom stop method to avoid PREEMPTING/DONE race condition
+                self._stop_skill_safely()
 
                 # Handle abort/redo logic (same as data collection)
                 if not trajectory_success:  # Episode was aborted by 'q' key
@@ -573,7 +644,7 @@ class ThreePhaseDataGenerator:
                 print(f"Error generating episode: {e}")
                 # Make sure to stop any running skills
                 try:
-                    self.robot.stop_skill()
+                    self._stop_skill_safely()
                 except:
                     pass
                 return False
