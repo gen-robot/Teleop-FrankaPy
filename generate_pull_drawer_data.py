@@ -479,7 +479,7 @@ class ThreePhaseDataGenerator:
         print("[INFO] Ensuring robot is ready for new episode...")
 
         # Simple check using franka interface status (more reliable than action client state)
-        max_wait_time = 2.0  # seconds
+        max_wait_time = 3.0  # seconds - increased timeout
         start_time = time.time()
 
         while time.time() - start_time < max_wait_time:
@@ -487,6 +487,8 @@ class ThreePhaseDataGenerator:
                 franka_status = self.robot._get_current_franka_interface_status().franka_interface_status
                 if franka_status.is_ready and not self.robot._in_skill:
                     print("[INFO] Robot confirmed ready for new episode")
+                    # Additional small delay to ensure everything is settled
+                    time.sleep(0.2)
                     return
             except Exception as e:
                 print(f"[WARN] Error checking robot status: {e}")
@@ -494,6 +496,8 @@ class ThreePhaseDataGenerator:
             time.sleep(0.1)
 
         print("[WARN] Robot readiness timeout, but proceeding...")
+        # Force a longer delay if timeout occurred
+        time.sleep(1.0)
 
     def _stop_skill_safely(self):
         """
@@ -536,6 +540,24 @@ class ThreePhaseDataGenerator:
         print("[WARN] Skill stop timeout, forcing state reset...")
         self.robot._in_skill = False
 
+        # Additional verification: ensure robot can accept new commands
+        print("[INFO] Verifying robot is ready for new commands...")
+        max_verify_time = 2.0
+        verify_start = time.time()
+
+        while time.time() - verify_start < max_verify_time:
+            try:
+                # Use franka interface status instead of is_skill_done to avoid action client issues
+                franka_status = self.robot._get_current_franka_interface_status().franka_interface_status
+                if franka_status.is_ready and not self.robot._in_skill:
+                    print("[INFO] Robot confirmed ready for new commands")
+                    return
+            except Exception as e:
+                print(f"[WARN] Error verifying robot readiness: {e}")
+            time.sleep(0.1)
+
+        print("[WARN] Robot readiness verification timeout, but proceeding...")
+
     def robot_init_for_episode(self):
         """
         Initialize robot for new episode (exactly like data_collection.py).
@@ -545,15 +567,61 @@ class ThreePhaseDataGenerator:
         # CRITICAL FIX: Ensure action client is in clean state before starting new episode
         self._ensure_action_client_ready()
 
+        # Additional small delay to ensure robot is fully settled after previous episode
+        import time
+        time.sleep(0.5)
+        print("Starting robot reset sequence...")
+
         # Exactly like data_collection.py main()
-        self.robot.reset_joints()
+        print("Resetting joints...")
+
+        # Final safety check before reset_joints to avoid "Cannot send another command" error
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Check if we can send commands using franka interface status
+                franka_status = self.robot._get_current_franka_interface_status().franka_interface_status
+                if not franka_status.is_ready:
+                    print(f"[WARN] Franka interface not ready on attempt {attempt+1}, waiting...")
+                    time.sleep(1.0)
+                    continue
+
+                if self.robot._in_skill:
+                    print(f"[WARN] Robot still in skill on attempt {attempt+1}, waiting...")
+                    time.sleep(1.0)
+                    continue
+
+                # Attempt reset_joints
+                self.robot.reset_joints()
+                print("Joint reset completed successfully")
+                break
+
+            except ValueError as e:
+                if "Cannot send another command" in str(e):
+                    print(f"[WARN] Command conflict on attempt {attempt+1}: {e}")
+                    if attempt < max_attempts - 1:
+                        print("Waiting before retry...")
+                        time.sleep(2.0)
+                        continue
+                    else:
+                        print("[ERROR] Failed to reset joints after all attempts")
+                        raise
+                else:
+                    raise
+            except Exception as e:
+                print(f"[ERROR] Unexpected error during joint reset: {e}")
+                raise
+
+        print("Opening gripper...")
         self.robot.open_gripper()
 
         # Start dynamic skill (exactly like data_collection.py)
+        print("Moving to HOME_POSE...")
         self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True,
                            buffer_time=100000000, skill_desc='MOVE',
                            cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES,
                            ignore_virtual_walls=True)
+        print("HOME_POSE movement completed.")
 
         # Initialize pose tracking from current position (exactly like data_collection.py)
         self._ee_pose_init()
