@@ -5,13 +5,13 @@ Enhanced trajectory generation script for pull_drawer dataset with automated pus
 Phase 0: Initialization movement (NOT recorded) - move from HOME_POSE to random pose
 Phase 1: Connection movement (recorded) - move from random pose to pull episode start
 Phase 2: Execute pull drawer episode (recorded)
-Phase 3: Connection movement (NOT recorded) - move from pull end to push episode frame 10
-Phase 4: Execute push drawer episode from frame 10 (NOT recorded) - automated reset
+Phase 3: Connection movement (NOT recorded) - move from pull end to push episode start frame
+Phase 4: Execute push drawer episode from start frame (NOT recorded) - automated reset
 
 Only Phase 1 and Phase 2 are recorded for training data. Phase 3 and 4 provide automated reset.
 
 Usage:
-    python3 generate_pull_drawer_data_auto.py --num_episodes 5 --base_episode 2 --push_episode 0 --new_dataset_dir pull_drawer_new2 --pos_x_range -0.10 0.10 --pos_y_range -0.17 0.0 --pos_z_range -0.05 0.10
+    python3 generate_pull_drawer_data_auto.py --num_episodes 5 --base_episode 2 --push_episode 0 --push_start_frame 10 --new_dataset_dir datasets/yukun/pull_drawer_new2 --pos_x_range -0.10 0.10 --pos_y_range -0.17 0.0 --pos_z_range -0.05 0.10
 """
 
 import os
@@ -39,7 +39,7 @@ import rospy
 
 class ThreePhaseDataGenerator:
     def __init__(self, base_dataset_dir="pull_drawer", new_dataset_dir="pull_drawer_new",
-                 push_dataset_dir="push_drawer", pos_x_range=None, pos_y_range=None, pos_z_range=None):
+                 push_dataset_dir="push_drawer", push_start_frame=10, pos_x_range=None, pos_y_range=None, pos_z_range=None):
         """
         Initialize the three-phase data generator with push drawer reset functionality.
 
@@ -47,6 +47,7 @@ class ThreePhaseDataGenerator:
             base_dataset_dir: Directory containing the original pull_drawer dataset
             new_dataset_dir: Directory to save new generated episodes
             push_dataset_dir: Directory containing the push_drawer dataset for reset
+            push_start_frame: Frame number to start push episode execution from (default: 10)
             pos_x_range: Position offset range for X axis [min, max] in meters
             pos_y_range: Position offset range for Y axis [min, max] in meters
             pos_z_range: Position offset range for Z axis [min, max] in meters
@@ -54,6 +55,7 @@ class ThreePhaseDataGenerator:
         self.base_dataset_dir = base_dataset_dir
         self.new_dataset_dir = new_dataset_dir
         self.push_dataset_dir = push_dataset_dir
+        self.push_start_frame = push_start_frame
         self.control_frequency = 5  # Hz, same as original data collection
 
         # Initialize robot and cameras
@@ -317,17 +319,17 @@ class ThreePhaseDataGenerator:
         return delta_positions, delta_eulers, grippers
 
     def _generate_push_connection_sequence(self, pull_episode_data, push_episode_data):
-        """Generate Phase 3: Connection from end of pull episode to frame 10 of push episode (not recorded)"""
+        """Generate Phase 3: Connection from end of pull episode to specified frame of push episode (not recorded)"""
         # Start pose: end of pull episode (last frame)
         pull_end_position = pull_episode_data['state']['end_effector']['position'][-1]
         pull_end_orientation = pull_episode_data['state']['end_effector']['orientation'][-1]
         start_pose = RigidTransform(rotation=pull_end_orientation, translation=pull_end_position,
                                   from_frame='franka_tool', to_frame='world')
 
-        # Target pose: frame 10 of push episode
-        push_frame10_position = push_episode_data['state']['end_effector']['position'][10]
-        push_frame10_orientation = push_episode_data['state']['end_effector']['orientation'][10]
-        target_pose = RigidTransform(rotation=push_frame10_orientation, translation=push_frame10_position,
+        # Target pose: specified frame of push episode
+        push_start_position = push_episode_data['state']['end_effector']['position'][self.push_start_frame]
+        push_start_orientation = push_episode_data['state']['end_effector']['orientation'][self.push_start_frame]
+        target_pose = RigidTransform(rotation=push_start_orientation, translation=push_start_position,
                                    from_frame='franka_tool', to_frame='world')
 
         duration = 2.0  # Connection duration
@@ -345,11 +347,11 @@ class ThreePhaseDataGenerator:
         return delta_positions, delta_eulers, grippers
 
     def _generate_push_execution_sequence(self, push_episode_data):
-        """Generate Phase 4: Execute push episode starting from frame 10 (not recorded)"""
-        # Extract push episode data starting from frame 10
-        push_positions = push_episode_data["action"]["end_effector"]["delta_position"][10:]
-        push_eulers = push_episode_data["action"]["end_effector"]["delta_euler"][10:]
-        push_grippers = push_episode_data["action"]["end_effector"]["gripper_width"][10:]
+        """Generate Phase 4: Execute push episode starting from specified frame (not recorded)"""
+        # Extract push episode data starting from specified frame
+        push_positions = push_episode_data["action"]["end_effector"]["delta_position"][self.push_start_frame:]
+        push_eulers = push_episode_data["action"]["end_effector"]["delta_euler"][self.push_start_frame:]
+        push_grippers = push_episode_data["action"]["end_effector"]["gripper_width"][self.push_start_frame:]
 
         return push_positions, push_eulers, push_grippers
 
@@ -882,9 +884,10 @@ def get_arguments():
     parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to generate.")
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2 (pull drawer).")
     parser.add_argument("--push_episode", type=int, default=0, help="Push episode index to use for reset phases (optional).")
-    parser.add_argument("--base_dataset_dir", type=str, default="pull_drawer", help="Directory containing base pull_drawer dataset.")
-    parser.add_argument("--push_dataset_dir", type=str, default="push_drawer", help="Directory containing push_drawer dataset.")
-    parser.add_argument("--new_dataset_dir", type=str, default="pull_drawer_new", help="Directory to save new episodes.")
+    parser.add_argument("--push_start_frame", type=int, default=15, help="Frame number to start push episode execution from (default: 10).")
+    parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing base pull_drawer dataset.")
+    parser.add_argument("--push_dataset_dir", type=str, default="datasets/yukun/push_drawer", help="Directory containing push_drawer dataset.")
+    parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
     parser.add_argument("--random_push_episodes", action="store_true", help="Use random push episodes for each reset.")
 
@@ -912,6 +915,7 @@ def main():
             args.base_dataset_dir,
             args.new_dataset_dir,
             args.push_dataset_dir,
+            args.push_start_frame,
             pos_x_range=args.pos_x_range,
             pos_y_range=args.pos_y_range,
             pos_z_range=args.pos_z_range
@@ -949,7 +953,7 @@ def main():
 
             print(f"Using pull drawer episode {base_episode_idx} for generation")
             if push_episode_idx is not None:
-                print(f"Using push drawer episode {push_episode_idx} for reset")
+                print(f"Using push drawer episode {push_episode_idx} starting from frame {args.push_start_frame} for reset")
             else:
                 print("No push drawer episode selected - manual reset required")
 
@@ -962,7 +966,7 @@ def main():
 
                 # Ask user for next episode (after data is saved, before moving to home)
                 if i < args.num_episodes - 1:  # Not the last episode
-                    input("[INFO] Press enter to continue to next episode")
+                    #input("[INFO] Press enter to continue to next episode")
                     # Initialize robot for next episode (move to HOME_POSE)
                     generator.robot_init_for_episode()
             else:
