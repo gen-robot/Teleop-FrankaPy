@@ -66,7 +66,69 @@ class DataRepleyer:
         data = np.load(os.path.join(dataset_dir, "data.npy"), allow_pickle=True).item()
         self.data_structure_check(data)
 
+        # Check if this is the new simple format and convert if needed
+        if self._is_simple_format(data):
+            print("[INFO] Detected simple format, converting to VLA format...")
+            data = self._convert_simple_to_vla_format(data)
+            print("[INFO] Conversion complete.")
+
         return data
+
+    def _is_simple_format(self, data):
+        """Check if data is in simple format (instruction, actions, robot_state)"""
+        simple_keys = {'instruction', 'actions', 'robot_state'}
+        vla_keys = {'action', 'observation', 'state', 'task_info'}
+
+        data_keys = set(data.keys())
+        has_simple = simple_keys.issubset(data_keys)
+        has_vla = any(key in data_keys for key in vla_keys)
+
+        return has_simple and not has_vla
+
+    def _convert_simple_to_vla_format(self, simple_data):
+        """Convert simple format to VLA format for compatibility"""
+        actions = simple_data['actions']  # (N, 7) - [x, y, z, rx, ry, rz, gripper]
+        robot_states = simple_data['robot_state']  # (N, 8) - [x, y, z, qx, qy, qz, qw, gripper]
+
+        # Create VLA-compatible structure
+        vla_data = {
+            "task_info": {
+                "instruction": [simple_data['instruction']] * len(actions)
+            },
+            "action": {
+                "end_effector": {
+                    "delta_position": actions[:, :3],      # [x, y, z]
+                    "delta_euler": actions[:, 3:6],        # [rx, ry, rz]
+                    "abs_position": robot_states[:, :3],   # [x, y, z]
+                    "abs_euler": self._quaternions_to_euler(robot_states[:, 3:7]),  # convert quat to euler
+                    "gripper_width": actions[:, 6],        # gripper commands
+                }
+            },
+            "state": {
+                "end_effector": {
+                    "position": robot_states[:, :3],       # [x, y, z]
+                    "orientation": robot_states[:, 3:7],   # [qx, qy, qz, qw]
+                    "gripper_width": robot_states[:, 7],   # gripper state
+                }
+            },
+            "observation": {
+                "rgb": [],  # Empty - will use live camera
+                "rgb_timestamp": [],
+            }
+        }
+
+        return vla_data
+
+    def _quaternions_to_euler(self, quaternions):
+        """Convert quaternions to euler angles using transforms3d"""
+        euler_angles = []
+        for quat in quaternions:
+            # quat format: [qx, qy, qz, qw] -> [qw, qx, qy, qz] for transforms3d
+            quat_reordered = [quat[3], quat[0], quat[1], quat[2]]
+            euler = quat2euler(quat_reordered, 'sxyz')
+            euler_angles.append(euler)
+
+        return np.array(euler_angles)
 
     def ee_pose_init(self):
         time.sleep(0.5)
