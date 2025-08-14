@@ -312,7 +312,7 @@ class ThreePhaseDataGenerator:
         end_pose = RigidTransform(rotation=first_orientation, translation=first_position,
                                 from_frame='franka_tool', to_frame='world')
 
-        duration = 2.5
+        duration = np.random.uniform(2.2, 3.0)
         num_steps = int(duration * self.control_frequency)
 
         # Smooth interpolation for Phase 1
@@ -340,7 +340,7 @@ class ThreePhaseDataGenerator:
         target_pose = RigidTransform(rotation=push_start_orientation, translation=push_start_position,
                                    from_frame='franka_tool', to_frame='world')
 
-        duration = 2.0  # Connection duration
+        duration = 1.5  # Connection duration
         num_steps = int(duration * self.control_frequency)
 
         # Smooth interpolation for connection
