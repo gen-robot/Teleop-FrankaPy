@@ -527,6 +527,16 @@ class ThreePhaseDataGenerator:
                         timestamp=timestamp
                     )
 
+                # DEBUG: Log recording boundaries and current step
+                if i == 0:
+                    print(f"[DEBUG] Recording boundaries: phase0_end={self.phase0_end}, phase2_end={self.phase2_end}, total_steps={len(position_sequence)}")
+                if i == self.phase0_end:
+                    print(f"[DEBUG] Step {i}: Starting data recording (Phase 1)")
+                if i == self.phase2_end:
+                    print(f"[DEBUG] Step {i}: Stopping data recording (end of Phase 2)")
+                if i == len(position_sequence) - 1:
+                    print(f"[DEBUG] Step {i}: Final trajectory step")
+
             except Exception as e:
                 # EXACT COPY: Data replayer's error recovery
                 self._ee_pose_init()
@@ -536,6 +546,11 @@ class ThreePhaseDataGenerator:
 
             step += 1
             control_rate.sleep()
+
+        # DEBUG: Log final robot state before stopping skill
+        final_pose = self.robot.get_pose()
+        print(f"[DEBUG] Final robot pose before stop: {final_pose.translation}")
+        print(f"[DEBUG] Recorded data steps: {len(self.data_collector.data_dict['action']['end_effector']['delta_position'])}")
 
         self.robot.stop_skill()
         print("[INFO] Complete trajectory execution finished.")
@@ -604,13 +619,26 @@ class ThreePhaseDataGenerator:
 
         print("[INFO] Safely stopping skill...")
 
+        # DEBUG: Log current robot and action client state
+        print(f"[DEBUG] Robot connected: {self.robot._connected}")
+        print(f"[DEBUG] Robot in skill: {self.robot._in_skill}")
+        try:
+            client_state = self.robot._client.get_state()
+            print(f"[DEBUG] Action client state: {client_state}")
+        except Exception as e:
+            print(f"[DEBUG] Could not get action client state: {e}")
+
         if not self.robot._connected or not self.robot._in_skill:
             print("[INFO] No active skill to stop")
             return
 
         # Cancel the goal
         print("[INFO] Cancelling current goal...")
-        self.robot._client.cancel_goal()
+        try:
+            self.robot._client.cancel_goal()
+            print("[DEBUG] Goal cancellation sent successfully")
+        except Exception as e:
+            print(f"[DEBUG] Error during goal cancellation: {e}")
 
         # Wait for cancellation to complete WITHOUT using wait_for_result() polling
         # This avoids the PREEMPTING/DONE race condition
@@ -659,6 +687,13 @@ class ThreePhaseDataGenerator:
         Initialize robot for new episode (exactly like data_collection.py).
         """
         print("Initializing robot for new episode...")
+
+        # DEBUG: Log current robot pose before initialization
+        try:
+            current_pose = self.robot.get_pose()
+            print(f"[DEBUG] Robot pose before initialization: {current_pose.translation}")
+        except Exception as e:
+            print(f"[DEBUG] Could not get robot pose before init: {e}")
 
         # CRITICAL FIX: Ensure action client is in clean state before starting new episode
         self._ensure_action_client_ready()
@@ -721,6 +756,19 @@ class ThreePhaseDataGenerator:
 
         # Initialize pose tracking from current position (exactly like data_collection.py)
         self._ee_pose_init()
+
+        # DEBUG: Verify robot is actually at HOME_POSE
+        try:
+            current_pose = self.robot.get_pose()
+            home_pose = FC.HOME_POSE
+            position_diff = np.linalg.norm(current_pose.translation - home_pose.translation)
+            print(f"[DEBUG] Robot pose after HOME_POSE: {current_pose.translation}")
+            print(f"[DEBUG] Expected HOME_POSE: {home_pose.translation}")
+            print(f"[DEBUG] Position difference: {position_diff:.4f}m")
+            if position_diff > 0.05:  # 5cm tolerance
+                print(f"[WARNING] Robot may not be at HOME_POSE! Difference: {position_diff:.4f}m")
+        except Exception as e:
+            print(f"[DEBUG] Could not verify HOME_POSE: {e}")
 
         print("Robot initialized and ready for episode generation.")
 
@@ -796,8 +844,23 @@ class ThreePhaseDataGenerator:
                 trajectory_success = self._execute_complete_trajectory(position_sequence, rotation_sequence, gripper_sequence)
 
                 print("Trajectory execution finished. Stopping dynamic skill...")
+
+                # DEBUG: Log robot state before stopping
+                try:
+                    current_pose = self.robot.get_pose()
+                    print(f"[DEBUG] Robot pose before skill stop: {current_pose.translation}")
+                except Exception as e:
+                    print(f"[DEBUG] Could not get robot pose: {e}")
+
                 # CRITICAL FIX: Use custom stop method to avoid PREEMPTING/DONE race condition
                 self._stop_skill_safely()
+
+                # DEBUG: Log robot state after stopping
+                try:
+                    current_pose = self.robot.get_pose()
+                    print(f"[DEBUG] Robot pose after skill stop: {current_pose.translation}")
+                except Exception as e:
+                    print(f"[DEBUG] Could not get robot pose after stop: {e}")
 
                 # Handle abort/redo logic (same as data collection)
                 if not trajectory_success:  # Episode was aborted by 'q' key
