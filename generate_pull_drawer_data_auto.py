@@ -340,7 +340,7 @@ class ThreePhaseDataGenerator:
         target_pose = RigidTransform(rotation=push_start_orientation, translation=push_start_position,
                                    from_frame='franka_tool', to_frame='world')
 
-        duration = 1.5  # Connection duration
+        duration = 2.0  # Connection duration
         num_steps = int(duration * self.control_frequency)
 
         # Smooth interpolation for connection
@@ -1001,7 +1001,7 @@ def get_arguments():
     parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to generate.")
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2 (pull drawer).")
     parser.add_argument("--push_episode", type=int, default=0, help="Push episode index to use for reset phases (optional).")
-    parser.add_argument("--push_start_frame", type=int, default=15, help="Frame number to start push episode execution from (default: 10).")
+    parser.add_argument("--push_start_frame", type=int, default=30, help="Frame number to start push episode execution from (default: 10).")
     parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing base pull_drawer dataset.")
     parser.add_argument("--push_dataset_dir", type=str, default="datasets/yukun/push_drawer", help="Directory containing push_drawer dataset.")
     parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new", help="Directory to save new episodes.")
