@@ -64,7 +64,7 @@ class ThreePhaseDataGenerator:
         # FrankaArm will handle ROS node initialization automatically
         self.robot = FrankaArm()
         self.cameras = RealsenseAPI()
-        self.data_collector = VLADataCollector(self.robot, self.cameras)
+        self.data_collector = VLADataCollector(self.robot, self.cameras, include_depth=False, store_images_in_npy=False)
 
         # Load base datasets
         self.base_episodes = self._load_base_episodes()
