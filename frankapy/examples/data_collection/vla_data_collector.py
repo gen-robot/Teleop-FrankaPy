@@ -95,6 +95,33 @@ class VLADataCollector:
             out.release()
             print(f"Saved camera {cam_idx} video to: {video_filename}")
 
+    def save_individual_frames(self, rgb_array, base_path):
+        """
+        Save individual JPEG frames like pull_drawer format.
+        rgb_array shape: [frame_num, cam_num, H, W, 3]
+        """
+        if isinstance(rgb_array, list):
+            rgb_array = np.stack(rgb_array, axis=0)
+
+        if rgb_array.ndim != 5 or rgb_array.shape[-1] != 3:
+            raise ValueError("rgb_array must be shape [frame_num, cam_num, H, W, 3]")
+
+        frame_num, cam_num, H, W, _ = rgb_array.shape
+
+        for cam_idx in range(cam_num):
+            cam_dir = os.path.join(base_path, f"cam_{cam_idx}")
+            os.makedirs(cam_dir, exist_ok=True)
+
+            for frame_idx in range(frame_num):
+                frame = rgb_array[frame_idx, cam_idx]  # [H, W, 3]
+                frame_filename = os.path.join(cam_dir, f"frame_{frame_idx:04d}.jpg")
+
+                # Convert RGB to BGR for OpenCV
+                frame_bgr = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+                cv2.imwrite(frame_filename, frame_bgr)
+
+            print(f"Saved {frame_num} frames for camera {cam_idx} to: {cam_dir}")
+
     def save_data(self, save_path, episode_idx, is_compressed=False, is_save_video = True):
         """Save data as .npy file with dictionary structure."""
         saving_data = to_numpy(self.data_dict, self.device)
@@ -118,7 +145,12 @@ class VLADataCollector:
         if is_save_video:
             if self.is_image_encode:
                 raise ValueError(f"you set is_image_encode, so the video can not be saved.")
-            self.save_multi_cam_videos(saving_data["observation"]["rgb"], save_path)
+            if self.store_images_in_npy:
+                # Old behavior: save MP4 videos
+                self.save_multi_cam_videos(saving_data["observation"]["rgb"], save_path)
+            else:
+                # New behavior: save individual JPEG frames like pull_drawer format
+                self.save_individual_frames(saving_data["observation"]["rgb"], save_path)
         self.clear_data()
 
     def update_instruction(self, instruction):
