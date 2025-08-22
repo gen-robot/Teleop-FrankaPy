@@ -228,6 +228,10 @@ class RealTestRecorder:
         """Execute deltas using data-replayer methodology and record robot-only data."""
         print(f"Executing trajectory with {len(delta_positions)} steps...")
         if not self.dry_run:
+            # CRITICAL FIX: Stop any previous skill before starting new trajectory (like reference script)
+            print("[INFO] Stopping any previous skill before starting trajectory...")
+            self.robot.stop_skill()
+
             # Start dynamic skill at current pose
             current_pose = self.robot.get_pose()
             self.robot.goto_pose(
@@ -241,15 +245,23 @@ class RealTestRecorder:
             )
             time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
-        rate = rospy.Rate(self.control_frequency)
+        if not self.dry_run:
+            rate = rospy.Rate(self.control_frequency)
+            self.init_time = rospy.Time.now().to_time()
+        else:
+            rate = None
+            self.init_time = time.time()
+
         self.data_collector.clear_data()
         self.command_xyz = self.init_xyz.copy()
         self.command_rotation = self.init_rotation.copy()
-        self.init_time = rospy.Time.now().to_time()
 
         for step in range(len(delta_positions)):
             try:
-                timestamp = rospy.Time.now().to_time() - self.init_time
+                if not self.dry_run:
+                    timestamp = rospy.Time.now().to_time() - self.init_time
+                else:
+                    timestamp = time.time() - self.init_time
                 dxyz = delta_positions[step]
                 deuler = delta_eulers[step]
                 grw = grippers[step]
@@ -311,14 +323,23 @@ class RealTestRecorder:
             except Exception as e:
                 # Simple recovery: reinitialize baseline and continue
                 self._ee_pose_init()
-                rate.sleep()
+                if not self.dry_run:
+                    rate.sleep()
+                else:
+                    time.sleep(1.0 / self.control_frequency)
                 print(f"[WARN] Move failed? : {e}")
                 continue
 
-            rate.sleep()
+            if not self.dry_run:
+                rate.sleep()
+            else:
+                time.sleep(1.0 / self.control_frequency)
 
-        print("Trajectory execution finished. Stopping dynamic skill...")
-        self._stop_skill_safely()
+        if not self.dry_run:
+            print("Trajectory execution finished. Stopping dynamic skill...")
+            self._stop_skill_safely()
+        else:
+            print("[DRY RUN] Trajectory execution finished.")
 
     def _save_episode(self, episode_idx: int, meta: dict):
         episode_dir = os.path.join(self.dataset_dir, f"episode_{episode_idx}")
@@ -380,8 +401,13 @@ class RealTestRecorder:
             item = pre[axis_name]
             ep_idx = item["episode_idx"]
             print(f"\n=== Episode {ep_idx}: +{offset_m} m along {axis_name} ===")
-            if idx > 0:
+
+            # CRITICAL FIX: Stop any active skill before reinitializing (like reference script)
+            if idx > 0 and not self.dry_run:
+                print("[INFO] Stopping previous skill before reinitializing...")
+                self.robot.stop_skill()
                 self.robot_init_for_episode()
+
             self._execute_delta_trajectory(item["delta_positions"], item["delta_eulers"], item["grippers"], record_instruction=f"real_test_axis_{axis_name.lower()}")
             steps_recorded = len(self.data_collector.data_dict['action']['end_effector']['delta_position'])
             meta = {
