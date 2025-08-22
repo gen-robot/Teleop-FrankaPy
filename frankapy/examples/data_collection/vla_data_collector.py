@@ -12,10 +12,12 @@ from autolab_core import RigidTransform
 from frankapy import FrankaArm
 
 class VLADataCollector:
-    def __init__(self, robot: FrankaArm, cameras: RealsenseAPI, is_image_encode: bool = False, *args, **kwargs):
+    def __init__(self, robot: FrankaArm, cameras: RealsenseAPI, is_image_encode: bool = False, include_depth: bool = False, store_images_in_npy: bool = False, *args, **kwargs):
         self.robot: FrankaArm = robot
         self.cameras: RealsenseAPI = cameras
         self.is_image_encode = is_image_encode
+        self.include_depth = include_depth
+        self.store_images_in_npy = store_images_in_npy
         self.data_dict = self.get_empty_data_dict()
         self.device = 'cpu'
 
@@ -96,12 +98,23 @@ class VLADataCollector:
     def save_data(self, save_path, episode_idx, is_compressed=False, is_save_video = True):
         """Save data as .npy file with dictionary structure."""
         saving_data = to_numpy(self.data_dict, self.device)
-        # if self.cameras is not None:
-        #     saving_data["image"] = [Image.fromarray(im).convert("RGB") for im in saving_data["observation"]["rgb"]]
+
+        # Create a copy for npy saving, conditionally excluding image data
+        npy_data = saving_data.copy()
+        if not self.store_images_in_npy:
+            # Remove image data from npy file (new default behavior)
+            if "observation" in npy_data:
+                npy_data["observation"] = npy_data["observation"].copy()
+                npy_data["observation"].pop("rgb", None)
+                npy_data["observation"].pop("rgb_timestamp", None)
+                npy_data["observation"].pop("depth", None)
+                npy_data["observation"].pop("depth_timestamp", None)
+
         save_func = np.savez_compressed if is_compressed else np.save
         np_path_data = os.path.join(save_path, f"data")
-        save_func(np_path_data, saving_data)
+        save_func(np_path_data, npy_data)
         print(f"save data at {np_path_data}.{'npz' if is_compressed else 'npy'}.")
+
         if is_save_video:
             if self.is_image_encode:
                 raise ValueError(f"you set is_image_encode, so the video can not be saved.")
@@ -113,19 +126,23 @@ class VLADataCollector:
 
     def update_rgb(self, timestamp=None):
         if self.cameras is None:
-            return 
+            return
         rgb = self.cameras.get_rgb()
-        depth = self.cameras.get_depth()
         timestamp = time.time() if timestamp==None else timestamp
         if self.is_image_encode:
             success, encoded_rgb = cv2.imencode('.jpeg', get_numpy(rgb, self.device), [cv2.IMWRITE_JPEG_QUALITY, 95])
             if not success:
                 raise ValueError("JPEG encode error.")
             rgb = np.frombuffer(encoded_rgb.tobytes(), dtype=np.uint8)
+
+        # Always store RGB data for video generation, but conditionally for npy file
         self.data_dict["observation"]["rgb"].append(rgb) # [N, camera_num, 480, 640, 3]
         self.data_dict["observation"]["rgb_timestamp"].append(timestamp)
-        self.data_dict["observation"]["depth"].append(depth) # [N, camera_num, 480, 640]
-        self.data_dict["observation"]["depth_timestamp"].append(timestamp)
+
+        if self.include_depth:
+            depth = self.cameras.get_depth()
+            self.data_dict["observation"]["depth"].append(depth) # [N, camera_num, 480, 640]
+            self.data_dict["observation"]["depth_timestamp"].append(timestamp)
 
     def update_state(self):
         joint_pos = self.robot.get_joints() # [7,]

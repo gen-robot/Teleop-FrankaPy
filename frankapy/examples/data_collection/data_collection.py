@@ -26,7 +26,7 @@ class RealDataCollection:
         self.cameras: RealsenseAPI = cameras
 
         self.args = args
-        self.data_collector = VLADataCollector(robot, cameras)
+        self.data_collector = VLADataCollector(robot, cameras, include_depth=args.include_depth, store_images_in_npy=args.one_npy)
         self.use_space_mouse = use_space_mouse
         if use_space_mouse:
             self.space_mouse = SpaceMouse(vendor_id=0x256f, product_id=0xc635)
@@ -261,6 +261,8 @@ def get_arguments():
     parser.add_argument("--user_frame", default=False, action="store_true")
     parser.add_argument("--pos_scale", default=0.02, type=float, help="The scale of xyz action")
     parser.add_argument("--rot_scale", default=0.08, type=float, help="The scale of rotation action")
+    parser.add_argument("--include_depth", default=False, action="store_true", help="Include depth images in data collection")
+    parser.add_argument("--one_npy", default=False, action="store_true", help="Store all image data in data.npy file (backward compatibility)")
     return parser.parse_args()
 
 
