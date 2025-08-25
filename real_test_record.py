@@ -224,6 +224,24 @@ class RealTestRecorder:
         grippers = np.full(num_steps, 1.0)  # open
         return delta_positions, delta_eulers, grippers, positions
 
+    def _generate_orientation_move(self, euler_offset: np.ndarray):
+        """Make orientation-only movement from init pose to init+euler_offset."""
+        start_pose = RigidTransform(rotation=self.init_rotation, translation=self.init_xyz,
+                                    from_frame='franka_tool', to_frame='world')
+        # Apply euler offset to rotation
+        offset_rotation = euler2mat(euler_offset[0], euler_offset[1], euler_offset[2], 'sxyz')
+        target_rotation = np.matmul(self.init_rotation, offset_rotation)
+        target_pose = RigidTransform(rotation=target_rotation, translation=self.init_xyz,  # keep position
+                                     from_frame='franka_tool', to_frame='world')
+        num_steps = int(self.duration * self.control_frequency)
+        positions = self._interpolate_positions([start_pose.translation, target_pose.translation], num_steps)
+        # Generate orientation deltas
+        orientations = self._interpolate_orientations([start_pose.quaternion, target_pose.quaternion], num_steps)
+        delta_positions = np.diff(positions, axis=0, prepend=positions[0:1])
+        delta_eulers = self._quaternions_to_delta_eulers(orientations)
+        grippers = np.full(num_steps, 1.0)  # open
+        return delta_positions, delta_eulers, grippers, positions, orientations
+
     def _execute_delta_trajectory(self, delta_positions, delta_eulers, grippers, record_instruction: str):
         """Execute deltas using data-replayer methodology and record robot-only data."""
         print(f"Executing trajectory with {len(delta_positions)} steps...")
@@ -352,17 +370,90 @@ class RealTestRecorder:
             json.dump(meta, f, indent=4)
         print(f"Episode {episode_idx} saved at {episode_dir}")
 
+    def _generate_orientation_move(self, euler_offset: np.ndarray):
+        """Make orientation-only movement from init pose to init+euler_offset."""
+        start_pose = RigidTransform(rotation=self.init_rotation, translation=self.init_xyz,
+                                    from_frame='franka_tool', to_frame='world')
+        # Apply euler offset to rotation
+        offset_rotation = euler2mat(euler_offset[0], euler_offset[1], euler_offset[2], 'sxyz')
+        target_rotation = np.matmul(self.init_rotation, offset_rotation)
+        target_pose = RigidTransform(rotation=target_rotation, translation=self.init_xyz,  # keep position
+                                     from_frame='franka_tool', to_frame='world')
+        num_steps = int(self.duration * self.control_frequency)
+        positions = self._interpolate_positions([start_pose.translation, target_pose.translation], num_steps)
+        # Generate orientation deltas
+        orientations = self._interpolate_orientations([start_pose.quaternion, target_pose.quaternion], num_steps)
+        delta_positions = np.diff(positions, axis=0, prepend=positions[0:1])
+        delta_eulers = self._quaternions_to_delta_eulers(orientations)
+        grippers = np.full(num_steps, 1.0)  # open
+        return delta_positions, delta_eulers, grippers, positions, orientations
+
+    def _interpolate_orientations(self, quaternions, num_points):
+        """Interpolate orientations using proper SLERP"""
+        if len(quaternions) < 2:
+            return np.array(quaternions)
+        t_waypoints = np.linspace(0, 1, len(quaternions))
+        t_interp = np.linspace(0, 1, num_points)
+        result = []
+        for t in t_interp:
+            idx = np.searchsorted(t_waypoints, t) - 1
+            idx = max(0, min(idx, len(quaternions) - 2))
+            if t_waypoints[idx + 1] == t_waypoints[idx]:
+                local_t = 0
+            else:
+                local_t = (t - t_waypoints[idx]) / (t_waypoints[idx + 1] - t_waypoints[idx])
+            q_interp = self._slerp(quaternions[idx], quaternions[idx + 1], local_t)
+            result.append(q_interp)
+        return np.array(result)
+
+    def _slerp(self, q1, q2, t):
+        """Spherical linear interpolation for quaternions"""
+        q1 = q1 / np.linalg.norm(q1)
+        q2 = q2 / np.linalg.norm(q2)
+        dot = np.dot(q1, q2)
+        if dot < 0:
+            q2 = -q2
+            dot = -dot
+        if dot > 0.9995:
+            result = q1 * (1 - t) + q2 * t
+            return result / np.linalg.norm(result)
+        theta = np.arccos(np.abs(dot))
+        sin_theta = np.sin(theta)
+        factor1 = np.sin((1 - t) * theta) / sin_theta
+        factor2 = np.sin(t * theta) / sin_theta
+        return (factor1 * q1 + factor2 * q2) / np.linalg.norm(factor1 * q1 + factor2 * q2)
+
+    def _quaternions_to_delta_eulers(self, quaternions):
+        """Convert quaternion sequence to delta euler sequence"""
+        eulers = np.array([mat2euler(RigidTransform(rotation=q, translation=[0,0,0]).rotation, 'sxyz')
+                          for q in quaternions])
+        return np.diff(eulers, axis=0, prepend=eulers[0:1])
+
     def _precompute_axis_sequences(self, offset_m: float = 0.1):
-        """Pre-generate linear trajectories for X/Y/Z from the current baseline."""
+        """Pre-generate linear trajectories for X/Y/Z and orientation moves from the current baseline."""
         pre = {}
+        deg2rad = np.pi / 180
+        euler_90deg = 90.0 * deg2rad  # 90 degrees in positive direction
+
         mapping = {
-            "X": (0, np.array([offset_m, 0.0, 0.0])),
-            "Y": (1, np.array([0.0, offset_m, 0.0])),
-            "Z": (2, np.array([0.0, 0.0, offset_m])),
+            "X": (0, np.array([offset_m, 0.0, 0.0]), None),
+            "Y": (1, np.array([0.0, offset_m, 0.0]), None),
+            "Z": (2, np.array([0.0, 0.0, offset_m]), None),
+            "Roll": (3, None, np.array([euler_90deg, 0.0, 0.0])),
+            "Pitch": (4, None, np.array([0.0, euler_90deg, 0.0])),
+            "Yaw": (5, None, np.array([0.0, 0.0, euler_90deg])),
         }
-        for axis_name, (ep_idx, axis_offset) in mapping.items():
-            dpos, deuler, gr, positions = self._generate_linear_axis_move(axis_offset)
-            rotations = np.array([self.init_rotation for _ in range(len(positions))])
+
+        for axis_name, (ep_idx, pos_offset, euler_offset) in mapping.items():
+            if pos_offset is not None:
+                # Position movement
+                dpos, deuler, gr, positions = self._generate_linear_axis_move(pos_offset)
+                rotations = np.array([self.init_rotation for _ in range(len(positions))])
+            else:
+                # Orientation movement
+                dpos, deuler, gr, positions, orientations = self._generate_orientation_move(euler_offset)
+                rotations = np.array([RigidTransform(rotation=q, translation=[0,0,0]).rotation for q in orientations])
+
             pre[axis_name] = {
                 "episode_idx": ep_idx,
                 "delta_positions": dpos,
@@ -373,14 +464,15 @@ class RealTestRecorder:
             }
         return pre
 
-    def run_selected_axes(self, offset_m: float = 0.1, do_x: bool = False, do_y: bool = False, do_z: bool = False, save_plot_name: str = "trajectories.png"):
-        # 1) Initialize once and precompute all three trajectories from this baseline
+    def run_selected_axes(self, offset_m: float = 0.1, do_x: bool = False, do_y: bool = False, do_z: bool = False,
+                         do_roll: bool = False, do_pitch: bool = False, do_yaw: bool = False, save_plot_name: str = "trajectories.png"):
+        # 1) Initialize once and precompute all trajectories from this baseline
         self.robot_init_for_episode()
         pre = self._precompute_axis_sequences(offset_m=offset_m)
 
-        # 2) Prepare plot data for all three axes regardless of selection
+        # 2) Prepare plot data for all axes regardless of selection
         all_trajs = []
-        for axis_name in ["X", "Y", "Z"]:
+        for axis_name in ["X", "Y", "Z", "Roll", "Pitch", "Yaw"]:
             item = pre[axis_name]
             all_trajs.append({
                 "name": f"Episode {item['episode_idx']} ({axis_name})",
@@ -388,11 +480,14 @@ class RealTestRecorder:
                 "rotations": item["rotations"],
             })
 
-        # 3) Decide which axes to execute; default to all if none specified
+        # 3) Decide which axes to execute; default to position axes if none specified
         selection = []
         if do_x: selection.append("X")
         if do_y: selection.append("Y")
         if do_z: selection.append("Z")
+        if do_roll: selection.append("Roll")
+        if do_pitch: selection.append("Pitch")
+        if do_yaw: selection.append("Yaw")
         if not selection:
             selection = ["X", "Y", "Z"]
 
@@ -445,7 +540,7 @@ class RealTestRecorder:
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
         ax.legend(loc='best')
-        ax.set_title('Real Test Linear Trajectories')
+        ax.set_title('Real Test Trajectories (Position + Orientation)')
         ax.view_init(elev=25, azim=-60)
         plt.tight_layout()
         plt.savefig(save_path, dpi=200)
@@ -462,6 +557,9 @@ def get_arguments():
     parser.add_argument("--x", action="store_true", help="Execute X axis episode")
     parser.add_argument("--y", action="store_true", help="Execute Y axis episode")
     parser.add_argument("--z", action="store_true", help="Execute Z axis episode")
+    parser.add_argument("--roll", action="store_true", help="Execute Roll orientation episode (+90 deg)")
+    parser.add_argument("--pitch", action="store_true", help="Execute Pitch orientation episode (+90 deg)")
+    parser.add_argument("--yaw", action="store_true", help="Execute Yaw orientation episode (+90 deg)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logs")
     parser.add_argument("--dry_run", action="store_true", help="Skip robot communication for a dry run, saving simulated data and plots.")
     return parser.parse_args()
@@ -482,7 +580,8 @@ def main():
                            duration=args.duration,
                            debug=args.debug,
                            dry_run=args.dry_run)
-    rec.run_selected_axes(offset_m=args.offset, do_x=args.x, do_y=args.y, do_z=args.z, save_plot_name="trajectories.png")
+    rec.run_selected_axes(offset_m=args.offset, do_x=args.x, do_y=args.y, do_z=args.z,
+                         do_roll=args.roll, do_pitch=args.pitch, do_yaw=args.yaw, save_plot_name="trajectories.png")
 
 
 if __name__ == "__main__":
