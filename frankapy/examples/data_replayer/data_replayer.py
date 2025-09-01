@@ -248,7 +248,7 @@ class DataRepleyer:
         print("[INFO] Replay end.")
 
         # save videos
-        video_path = "/home/franka/Documents/Teleop-FrankaPy/videos/test.mp4"
+        video_path = "datasets/yukun/test.mp4"
         height, width, _ = save_image_list[0].shape
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')

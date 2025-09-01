@@ -433,7 +433,7 @@ class RealTestRecorder:
         """Pre-generate linear trajectories for X/Y/Z and orientation moves from the current baseline."""
         pre = {}
         deg2rad = np.pi / 180
-        euler_90deg = 90.0 * deg2rad  # 90 degrees in positive direction
+        euler_90deg = 45.0 * deg2rad  # 90 degrees in positive direction
 
         mapping = {
             "X": (0, np.array([offset_m, 0.0, 0.0]), None),
