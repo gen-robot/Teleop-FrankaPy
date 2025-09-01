@@ -772,8 +772,8 @@ def get_arguments():
     parser = argparse.ArgumentParser(description="Three-phase trajectory data generation for pull_drawer dataset.")
     parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to generate.")
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2.")
-    parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing base dataset.")
-    parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new", help="Directory to save new episodes.")
+    parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/push_drawer", help="Directory containing base dataset.")
+    parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/push_drawer_new_small", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
 
     # Position offset ranges (in meters, per axis)
