@@ -366,8 +366,8 @@ class ThreePhaseDataGenerator:
         total_position_delta = end_pose.translation - start_pose.translation
 
         # Calculate total euler change using the same method as data collection
-        start_euler = mat2euler(start_pose.rotation, 'sxyz')
-        end_euler = mat2euler(end_pose.rotation, 'sxyz')
+        start_euler = np.array(mat2euler(start_pose.rotation, 'sxyz'))
+        end_euler = np.array(mat2euler(end_pose.rotation, 'sxyz'))
         total_euler_delta = end_euler - start_euler
 
         # Handle euler angle wrapping (choose shortest path)
@@ -388,6 +388,7 @@ class ThreePhaseDataGenerator:
         # Generate delta sequences
         delta_positions = np.outer(cumulative_progress, total_position_delta)
         delta_eulers = np.outer(cumulative_progress, total_euler_delta)
+        delta_eulers = -delta_eulers
 
         print(f"[DEBUG] Smooth delta generation: total_pos_delta={np.linalg.norm(total_position_delta):.4f}m, "
               f"total_euler_delta={np.linalg.norm(total_euler_delta):.4f}rad")
