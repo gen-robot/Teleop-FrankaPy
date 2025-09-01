@@ -291,14 +291,9 @@ class ThreePhaseDataGenerator:
         duration = 1.5
         num_steps = int(duration * self.control_frequency)
 
-        # Simple linear interpolation for Phase 0
-        positions = self._interpolate_positions([start_pose.translation, target_pose.translation], num_steps)
-        orientations = self._interpolate_orientations([start_pose.quaternion, target_pose.quaternion], num_steps)
+        # Generate smooth delta sequences directly (avoiding euler discontinuities)
+        delta_positions, delta_eulers = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
-
-        # Convert to delta sequences
-        delta_positions = np.diff(positions, axis=0, prepend=positions[0:1])
-        delta_eulers = self._quaternions_to_delta_eulers(orientations)
 
         return delta_positions, delta_eulers, grippers
 
@@ -315,14 +310,9 @@ class ThreePhaseDataGenerator:
         duration = np.random.uniform(2.2, 3.0)
         num_steps = int(duration * self.control_frequency)
 
-        # Smooth interpolation for Phase 1
-        positions = self._interpolate_positions([start_pose.translation, end_pose.translation], num_steps)
-        orientations = self._interpolate_orientations([start_pose.quaternion, end_pose.quaternion], num_steps)
+        # Generate smooth delta sequences directly (avoiding euler discontinuities)
+        delta_positions, delta_eulers = self._generate_smooth_delta_sequence(start_pose, end_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
-
-        # Convert to delta sequences
-        delta_positions = np.diff(positions, axis=0, prepend=positions[0:1])
-        delta_eulers = self._quaternions_to_delta_eulers(orientations)
 
         return delta_positions, delta_eulers, grippers
 
@@ -344,14 +334,9 @@ class ThreePhaseDataGenerator:
         duration = np.random.uniform(2.2, 3.0)  # Same as Phase 1
         num_steps = int(duration * self.control_frequency)
 
-        # Smooth interpolation for connection (identical to Phase 1)
-        positions = self._interpolate_positions([start_pose.translation, target_pose.translation], num_steps)
-        orientations = self._interpolate_orientations([start_pose.quaternion, target_pose.quaternion], num_steps)
+        # Generate smooth delta sequences directly (avoiding euler discontinuities)
+        delta_positions, delta_eulers = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
-
-        # Convert to delta sequences (identical to Phase 1)
-        delta_positions = np.diff(positions, axis=0, prepend=positions[0:1])
-        delta_eulers = self._quaternions_to_delta_eulers(orientations)
 
         print(f"[DEBUG] Phase 3: Connecting to push episode frame {self.push_start_frame} (like Phase 1 connects to frame 0)")
         print(f"[DEBUG] This allows Phase 4 to use original push episode deltas from frame {self.push_start_frame}")
@@ -371,6 +356,43 @@ class ThreePhaseDataGenerator:
         print(f"[DEBUG] This is identical to how Phase 2 uses original pull episode deltas from frame 0")
 
         return push_positions, push_eulers, push_grippers
+
+    def _generate_smooth_delta_sequence(self, start_pose, end_pose, num_steps):
+        """
+        Generate smooth delta position and delta euler sequences without euler discontinuities.
+        This avoids the quaternion->euler->diff conversion that causes accumulation errors.
+        """
+        # Calculate total position and orientation changes
+        total_position_delta = end_pose.translation - start_pose.translation
+
+        # Calculate total euler change using the same method as data collection
+        start_euler = mat2euler(start_pose.rotation, 'sxyz')
+        end_euler = mat2euler(end_pose.rotation, 'sxyz')
+        total_euler_delta = end_euler - start_euler
+
+        # Handle euler angle wrapping (choose shortest path)
+        for i in range(3):
+            if total_euler_delta[i] > np.pi:
+                total_euler_delta[i] -= 2 * np.pi
+            elif total_euler_delta[i] < -np.pi:
+                total_euler_delta[i] += 2 * np.pi
+
+        # Distribute deltas smoothly across steps using smooth acceleration/deceleration
+        t_values = np.linspace(0, 1, num_steps)
+        # Use smooth S-curve (3t^2 - 2t^3) for natural acceleration/deceleration
+        smooth_factors = 3 * t_values**2 - 2 * t_values**3
+
+        # Calculate cumulative progress for each step
+        cumulative_progress = np.diff(smooth_factors, prepend=0)
+
+        # Generate delta sequences
+        delta_positions = np.outer(cumulative_progress, total_position_delta)
+        delta_eulers = np.outer(cumulative_progress, total_euler_delta)
+
+        print(f"[DEBUG] Smooth delta generation: total_pos_delta={np.linalg.norm(total_position_delta):.4f}m, "
+              f"total_euler_delta={np.linalg.norm(total_euler_delta):.4f}rad")
+
+        return delta_positions, delta_eulers
 
     def _interpolate_positions(self, waypoints, num_points):
         """Interpolate positions using numpy linear interpolation"""
