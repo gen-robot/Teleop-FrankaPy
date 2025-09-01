@@ -5,8 +5,8 @@ Enhanced trajectory generation script for pull_drawer dataset with automated pus
 Phase 0: Initialization movement (NOT recorded) - move from HOME_POSE to random pose
 Phase 1: Connection movement (recorded) - move from random pose to pull episode start
 Phase 2: Execute pull drawer episode (recorded)
-Phase 3: Connection movement (NOT recorded) - move from pull end to push episode frame 0
-Phase 4: Execute push drawer episode from frame 0 with skip to start frame (NOT recorded) - automated reset
+Phase 3: Connection movement (NOT recorded) - move from pull end to push episode start frame
+Phase 4: Execute push drawer episode from start frame (NOT recorded) - automated reset
 
 Only Phase 1 and Phase 2 are recorded for training data. Phase 3 and 4 provide automated reset.
 
@@ -264,8 +264,8 @@ class ThreePhaseDataGenerator:
             print(f"Phase 0: Current robot pose → Random pose (not recorded)")
             print(f"Phase 1: Random pose → Base episode start (recorded)")
             print(f"Phase 2: Execute pull drawer episode (recorded)")
-            print(f"Phase 3: Connection to push episode frame 0 (not recorded)")
-            print(f"Phase 4: Execute push drawer episode from frame 0 with skip to frame {self.push_start_frame} (not recorded)")
+            print(f"Phase 3: Connection to push episode frame {self.push_start_frame} (not recorded)")
+            print(f"Phase 4: Execute push drawer episode from frame {self.push_start_frame} (not recorded)")
         else:
             # Calculate steps to be saved (Phase 1 + Phase 2)
             steps_to_save = len(phase1_positions) + len(phase2_positions)
@@ -327,68 +327,48 @@ class ThreePhaseDataGenerator:
         return delta_positions, delta_eulers, grippers
 
     def _generate_push_connection_sequence(self, pull_episode_data, push_episode_data):
-        """Generate Phase 3: Connection from end of pull episode to FRAME 0 of push episode (not recorded)"""
+        """Generate Phase 3: Connection from end of pull episode to push episode start frame (not recorded)"""
         # Start pose: end of pull episode (last frame)
         pull_end_position = pull_episode_data['state']['end_effector']['position'][-1]
         pull_end_orientation = pull_episode_data['state']['end_effector']['orientation'][-1]
         start_pose = RigidTransform(rotation=pull_end_orientation, translation=pull_end_position,
                                   from_frame='franka_tool', to_frame='world')
 
-        # CRITICAL FIX: Target pose should be FRAME 0 of push episode, not the start frame
-        # This ensures Phase 4 can use the complete push episode deltas from frame 0
-        push_start_position = push_episode_data['state']['end_effector']['position'][0]  # Frame 0, not self.push_start_frame
-        push_start_orientation = push_episode_data['state']['end_effector']['orientation'][0]  # Frame 0, not self.push_start_frame
+        # Target pose: specified start frame of push episode (like Phase 1 connects to frame 0 of pull episode)
+        push_start_position = push_episode_data['state']['end_effector']['position'][self.push_start_frame]
+        push_start_orientation = push_episode_data['state']['end_effector']['orientation'][self.push_start_frame]
         target_pose = RigidTransform(rotation=push_start_orientation, translation=push_start_position,
                                    from_frame='franka_tool', to_frame='world')
 
-        duration = 2.0  # Connection duration
+        # Use same duration approach as Phase 1
+        duration = np.random.uniform(2.2, 3.0)  # Same as Phase 1
         num_steps = int(duration * self.control_frequency)
 
-        # Smooth interpolation for connection
+        # Smooth interpolation for connection (identical to Phase 1)
         positions = self._interpolate_positions([start_pose.translation, target_pose.translation], num_steps)
         orientations = self._interpolate_orientations([start_pose.quaternion, target_pose.quaternion], num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
 
-        # Convert to delta sequences
+        # Convert to delta sequences (identical to Phase 1)
         delta_positions = np.diff(positions, axis=0, prepend=positions[0:1])
         delta_eulers = self._quaternions_to_delta_eulers(orientations)
 
-        print(f"[DEBUG] Phase 3: Connecting to push episode frame 0 (not frame {self.push_start_frame})")
-        print(f"[DEBUG] This allows Phase 4 to use complete push episode deltas from frame 0")
+        print(f"[DEBUG] Phase 3: Connecting to push episode frame {self.push_start_frame} (like Phase 1 connects to frame 0)")
+        print(f"[DEBUG] This allows Phase 4 to use original push episode deltas from frame {self.push_start_frame}")
 
         return delta_positions, delta_eulers, grippers
 
     def _generate_push_execution_sequence(self, push_episode_data):
-        """Generate Phase 4: Execute push episode from frame 0, but skip to start_frame for actual execution (not recorded)"""
-        # CRITICAL FIX: Use complete push episode from frame 0, but skip the first push_start_frame steps
-        # This maintains the correct reference point for delta accumulation
+        """Generate Phase 4: Execute push episode starting from specified frame (not recorded)"""
+        # CORRECTED: Use original push episode deltas from start frame onwards (identical to Phase 2 approach)
+        # Phase 3 connects to the exact pose at push_start_frame, so we can use the original deltas from there
 
-        # Get complete push episode data from frame 0
-        complete_push_positions = push_episode_data["action"]["end_effector"]["delta_position"]
-        complete_push_eulers = push_episode_data["action"]["end_effector"]["delta_euler"]
-        complete_push_grippers = push_episode_data["action"]["end_effector"]["gripper_width"]
+        push_positions = push_episode_data["action"]["end_effector"]["delta_position"][self.push_start_frame:]
+        push_eulers = push_episode_data["action"]["end_effector"]["delta_euler"][self.push_start_frame:]
+        push_grippers = push_episode_data["action"]["end_effector"]["gripper_width"][self.push_start_frame:]
 
-        # Create a sequence that:
-        # 1. Executes frames 0 to push_start_frame-1 with zero deltas (to maintain pose accumulation)
-        # 2. Then executes the actual push episode from push_start_frame onwards
-
-        # Zero deltas for frames 0 to push_start_frame-1 (to advance the reference point correctly)
-        zero_positions = np.zeros((self.push_start_frame, 3))
-        zero_eulers = np.zeros((self.push_start_frame, 3))
-        zero_grippers = np.ones(self.push_start_frame)  # Keep gripper open
-
-        # Actual push episode deltas from push_start_frame onwards
-        active_positions = complete_push_positions[self.push_start_frame:]
-        active_eulers = complete_push_eulers[self.push_start_frame:]
-        active_grippers = complete_push_grippers[self.push_start_frame:]
-
-        # Combine sequences
-        push_positions = np.vstack([zero_positions, active_positions])
-        push_eulers = np.vstack([zero_eulers, active_eulers])
-        push_grippers = np.concatenate([zero_grippers, active_grippers])
-
-        print(f"[DEBUG] Phase 4: Using {len(zero_positions)} zero-delta steps + {len(active_positions)} active steps")
-        print(f"[DEBUG] This maintains correct pose accumulation reference point")
+        print(f"[DEBUG] Phase 4: Using original push episode deltas from frame {self.push_start_frame} onwards")
+        print(f"[DEBUG] This is identical to how Phase 2 uses original pull episode deltas from frame 0")
 
         return push_positions, push_eulers, push_grippers
 
@@ -1033,7 +1013,7 @@ def get_arguments():
     parser.add_argument("--push_start_frame", type=int, default=0, help="Frame number to start push episode execution from (default: 10).")
     parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/push_drawer", help="Directory containing base pull_drawer dataset.")
     parser.add_argument("--push_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing push_drawer dataset.")
-    parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/push_drawer_new", help="Directory to save new episodes.")
+    parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/push_drawer_new_small", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
     parser.add_argument("--random_push_episodes", action="store_true", help="Use random push episodes for each reset.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
