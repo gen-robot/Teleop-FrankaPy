@@ -288,7 +288,7 @@ class ThreePhaseDataGenerator:
             to_frame='world'
         )
         target_pose = random_pose
-        duration = 1.5
+        duration = 2.0
         num_steps = int(duration * self.control_frequency)
 
         # Generate smooth delta sequences directly (avoiding euler discontinuities)
@@ -331,7 +331,7 @@ class ThreePhaseDataGenerator:
                                    from_frame='franka_tool', to_frame='world')
 
         # Use same duration approach as Phase 1
-        duration = np.random.uniform(2.2, 3.0)  # Same as Phase 1
+        duration = 3.0
         num_steps = int(duration * self.control_frequency)
 
         # Generate smooth delta sequences directly (avoiding euler discontinuities)
@@ -1034,8 +1034,8 @@ def get_arguments():
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2 (pull drawer).")
     parser.add_argument("--push_episode", type=int, default=0, help="Push episode index to use for reset phases (optional).")
     parser.add_argument("--push_start_frame", type=int, default=0, help="Frame number to start push episode execution from (default: 10).")
-    parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/push_drawer", help="Directory containing base pull_drawer dataset.")
-    parser.add_argument("--push_dataset_dir", type=str, default="datasets/yukun/pull_drawer", help="Directory containing push_drawer dataset.")
+    parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/push_drawer_new_small", help="Directory containing base pull_drawer dataset.")
+    parser.add_argument("--push_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new_small", help="Directory containing push_drawer dataset.")
     parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/push_drawer_new_small", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
     parser.add_argument("--random_push_episodes", action="store_true", help="Use random push episodes for each reset.")
