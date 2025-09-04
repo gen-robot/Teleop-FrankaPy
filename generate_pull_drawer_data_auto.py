@@ -223,14 +223,15 @@ class ThreePhaseDataGenerator:
         print("Generating complete trajectory sequences for all phases...")
 
         # Phase 0: HOME_POSE to random pose (not recorded)
-        phase0_positions, phase0_eulers, phase0_grippers = self._generate_phase0_sequence(random_pose)
+        phase0_positions, phase0_quaternions, phase0_grippers = self._generate_phase0_sequence(random_pose)
 
         # Phase 1: Random pose to base episode start (recorded)
-        phase1_positions, phase1_eulers, phase1_grippers = self._generate_phase1_sequence(base_episode_data, random_pose)
+        phase1_positions, phase1_quaternions, phase1_grippers = self._generate_phase1_sequence(base_episode_data, random_pose)
 
         # Phase 2: Complete base episode (recorded)
         phase2_positions = base_episode_data["action"]["end_effector"]["delta_position"]
-        phase2_eulers = base_episode_data["action"]["end_effector"]["delta_euler"]
+        # Convert orientation to absolute quaternions for consistency
+        phase2_quaternions = base_episode_data["state"]["end_effector"]["orientation"]
         phase2_grippers = base_episode_data["action"]["end_effector"]["gripper_width"]
 
         # Store phase boundaries for data recording (only Phase 1 and 2 are recorded)
@@ -240,21 +241,21 @@ class ThreePhaseDataGenerator:
 
         # Initialize sequences with recorded phases
         complete_positions = np.vstack([phase0_positions, phase1_positions, phase2_positions])
-        complete_eulers = np.vstack([phase0_eulers, phase1_eulers, phase2_eulers])
+        complete_quaternions = np.vstack([phase0_quaternions, phase1_quaternions, phase2_quaternions])
         complete_grippers = np.concatenate([phase0_grippers, phase1_grippers, phase2_grippers])
 
         # Add push drawer reset phases if available (not recorded)
         if push_episode_data is not None:
             # Phase 3: Connection to push episode frame 10 (not recorded)
-            phase3_positions, phase3_eulers, phase3_grippers = self._generate_push_connection_sequence(
+            phase3_positions, phase3_quaternions, phase3_grippers = self._generate_push_connection_sequence(
                 base_episode_data, push_episode_data)
 
             # Phase 4: Execute push episode from frame 10 (not recorded)
-            phase4_positions, phase4_eulers, phase4_grippers = self._generate_push_execution_sequence(push_episode_data)
+            phase4_positions, phase4_quaternions, phase4_grippers = self._generate_push_execution_sequence(push_episode_data)
 
             # Add push phases to complete trajectory
             complete_positions = np.vstack([complete_positions, phase3_positions, phase4_positions])
-            complete_eulers = np.vstack([complete_eulers, phase3_eulers, phase4_eulers])
+            complete_quaternions = np.vstack([complete_quaternions, phase3_quaternions, phase4_quaternions])
             complete_grippers = np.concatenate([complete_grippers, phase3_grippers, phase4_grippers])
 
             # Calculate steps to be saved (Phase 1 + Phase 2)
@@ -276,7 +277,7 @@ class ThreePhaseDataGenerator:
             print(f"Phase 2: Execute pull drawer episode (recorded)")
             print("[INFO] No push episode data provided - skipping reset phases")
 
-        return complete_positions, complete_eulers, complete_grippers
+        return complete_positions, complete_quaternions, complete_grippers
 
     def _generate_phase0_sequence(self, random_pose):
         """Generate Phase 0: Current robot pose to random pose (initialization, not recorded)"""
@@ -291,11 +292,11 @@ class ThreePhaseDataGenerator:
         duration = 2.0
         num_steps = int(duration * self.control_frequency)
 
-        # Generate smooth delta sequences directly (avoiding euler discontinuities)
-        delta_positions, delta_eulers = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
+        # Generate smooth delta position and absolute quaternion sequences
+        delta_positions, absolute_quaternions = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
 
-        return delta_positions, delta_eulers, grippers
+        return delta_positions, absolute_quaternions, grippers
 
     def _generate_phase1_sequence(self, base_episode_data, random_pose):
         """Generate Phase 1: Random pose to base episode start (recorded)"""
@@ -310,11 +311,11 @@ class ThreePhaseDataGenerator:
         duration = np.random.uniform(2.2, 3.0)
         num_steps = int(duration * self.control_frequency)
 
-        # Generate smooth delta sequences directly (avoiding euler discontinuities)
-        delta_positions, delta_eulers = self._generate_smooth_delta_sequence(start_pose, end_pose, num_steps)
+        # Generate smooth delta position and absolute quaternion sequences
+        delta_positions, absolute_quaternions = self._generate_smooth_delta_sequence(start_pose, end_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
 
-        return delta_positions, delta_eulers, grippers
+        return delta_positions, absolute_quaternions, grippers
 
     def _generate_push_connection_sequence(self, pull_episode_data, push_episode_data):
         """Generate Phase 3: Connection from end of pull episode to push episode start frame (not recorded)"""
@@ -334,66 +335,59 @@ class ThreePhaseDataGenerator:
         duration = 3.0
         num_steps = int(duration * self.control_frequency)
 
-        # Generate smooth delta sequences directly (avoiding euler discontinuities)
-        delta_positions, delta_eulers = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
+        # Generate smooth delta position and absolute quaternion sequences
+        delta_positions, absolute_quaternions = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
 
         print(f"[DEBUG] Phase 3: Connecting to push episode frame {self.push_start_frame} (like Phase 1 connects to frame 0)")
         print(f"[DEBUG] This allows Phase 4 to use original push episode deltas from frame {self.push_start_frame}")
 
-        return delta_positions, delta_eulers, grippers
+        return delta_positions, absolute_quaternions, grippers
 
     def _generate_push_execution_sequence(self, push_episode_data):
         """Generate Phase 4: Execute push episode starting from specified frame (not recorded)"""
-        # CORRECTED: Use original push episode deltas from start frame onwards (identical to Phase 2 approach)
-        # Phase 3 connects to the exact pose at push_start_frame, so we can use the original deltas from there
-
+        # Use original push episode deltas for position
         push_positions = push_episode_data["action"]["end_effector"]["delta_position"][self.push_start_frame:]
-        push_eulers = push_episode_data["action"]["end_effector"]["delta_euler"][self.push_start_frame:]
+        
+        # Use absolute quaternions for orientation
+        push_quaternions = push_episode_data["state"]["end_effector"]["orientation"][self.push_start_frame:]
         push_grippers = push_episode_data["action"]["end_effector"]["gripper_width"][self.push_start_frame:]
 
-        print(f"[DEBUG] Phase 4: Using original push episode deltas from frame {self.push_start_frame} onwards")
-        print(f"[DEBUG] This is identical to how Phase 2 uses original pull episode deltas from frame 0")
+        print(f"[DEBUG] Phase 4: Using original push episode data from frame {self.push_start_frame} onwards")
 
-        return push_positions, push_eulers, push_grippers
+        return push_positions, push_quaternions, push_grippers
 
     def _generate_smooth_delta_sequence(self, start_pose, end_pose, num_steps):
         """
-        Generate smooth delta position and delta euler sequences without euler discontinuities.
-        This avoids the quaternion->euler->diff conversion that causes accumulation errors.
+        Generate smooth delta position and absolute quaternion sequences.
+        Uses SLERP for robust orientation interpolation.
         """
-        # Calculate total position and orientation changes
+        # Calculate total position change
         total_position_delta = end_pose.translation - start_pose.translation
 
-        # Calculate total euler change using the same method as data collection
-        start_euler = np.array(mat2euler(start_pose.rotation, 'sxyz'))
-        end_euler = np.array(mat2euler(end_pose.rotation, 'sxyz'))
-        total_euler_delta = end_euler - start_euler
-
-        # Handle euler angle wrapping (choose shortest path)
-        for i in range(3):
-            if total_euler_delta[i] > np.pi:
-                total_euler_delta[i] -= 2 * np.pi
-            elif total_euler_delta[i] < -np.pi:
-                total_euler_delta[i] += 2 * np.pi
-
-        # Distribute deltas smoothly across steps using smooth acceleration/deceleration
+        # Use smooth S-curve for position interpolation to ensure natural movement
         t_values = np.linspace(0, 1, num_steps)
-        # Use smooth S-curve (3t^2 - 2t^3) for natural acceleration/deceleration
         smooth_factors = 3 * t_values**2 - 2 * t_values**3
-
-        # Calculate cumulative progress for each step
         cumulative_progress = np.diff(smooth_factors, prepend=0)
-
-        # Generate delta sequences
         delta_positions = np.outer(cumulative_progress, total_position_delta)
-        delta_eulers = np.outer(cumulative_progress, total_euler_delta)
-        delta_eulers = -delta_eulers
 
-        print(f"[DEBUG] Smooth delta generation: total_pos_delta={np.linalg.norm(total_position_delta):.4f}m, "
-              f"total_euler_delta={np.linalg.norm(total_euler_delta):.4f}rad")
+        # Generate absolute quaternions using SLERP for smooth and accurate orientation
+        start_quat = start_pose.quaternion
+        end_quat = end_pose.quaternion
+        
+        # Ensure quaternions are normalized
+        start_quat /= np.linalg.norm(start_quat)
+        end_quat /= np.linalg.norm(end_quat)
 
-        return delta_positions, delta_eulers
+        # Handle potential sign flip for shortest path
+        if np.dot(start_quat, end_quat) < 0:
+            end_quat = -end_quat
+
+        absolute_quaternions = np.array([self._slerp(start_quat, end_quat, t) for t in t_values])
+
+        print(f"[DEBUG] Smooth delta generation: total_pos_delta={np.linalg.norm(total_position_delta):.4f}m")
+
+        return delta_positions, absolute_quaternions
 
     def _interpolate_positions(self, waypoints, num_points):
         """Interpolate positions using numpy linear interpolation"""
@@ -463,9 +457,11 @@ class ThreePhaseDataGenerator:
         """Convert quaternion sequence to delta euler sequence"""
         eulers = np.array([mat2euler(RigidTransform(rotation=q, translation=[0,0,0]).rotation, 'sxyz')
                           for q in quaternions])
-        return np.diff(eulers, axis=0, prepend=eulers[0:1])
+        delta_eulers = np.diff(eulers, axis=0)
+        # Prepend a zero delta for the first frame
+        return np.vstack([np.zeros(3), delta_eulers])
 
-    def _execute_complete_trajectory(self, position_sequence, rotation_sequence, gripper_sequence):
+    def _execute_complete_trajectory(self, position_sequence, quaternion_sequence, gripper_sequence):
         """
         Execute complete trajectory using data replayer methodology.
         Single baseline establishment, unified execution loop.
@@ -473,10 +469,9 @@ class ThreePhaseDataGenerator:
         """
         print(f"Executing complete trajectory with {len(position_sequence)} steps...")
 
-        # CRITICAL: Single baseline establishment (already done before trajectory generation)
-        # Baseline was established using current robot pose before trajectory generation
+        # CRITICAL: Single baseline establishment
         self.command_xyz = self.init_xyz.copy()
-        self.command_rotation = self.init_rotation.copy()
+        # Orientation is now handled by absolute quaternions, no accumulation needed
         print(f"Using established baseline at: {self.command_xyz}")
 
         # Initialize execution
@@ -488,8 +483,11 @@ class ThreePhaseDataGenerator:
         self.data_collector.clear_data()
         print("[INFO] Data recording will start from Phase 1")
 
+        # Get initial orientation for delta euler calculation for data saving
+        last_quat = self.robot.get_pose().quaternion
+
         for i in range(len(position_sequence)):
-            # Check for 'q' key abort signal (same as data collection)
+            # Check for 'q' key abort signal
             if self.quit_signal:
                 print("[INFO] Episode aborted by user ('q' key pressed)")
                 self.robot.stop_skill()
@@ -498,26 +496,24 @@ class ThreePhaseDataGenerator:
             try:
                 timestamp = rospy.Time.now().to_time() - self.init_time
 
-                # Get delta actions for this step (data replayer format)
+                # Get actions for this step
                 delta_xyz = position_sequence[i]
-                delta_euler = rotation_sequence[i]
+                target_quat = quaternion_sequence[i]
                 gripper_width = gripper_sequence[i]
 
-                # EXACT COPY: Data replayer's pose accumulation
-                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2], 'sxyz')
+                # Accumulate position
                 self.command_xyz += delta_xyz
-                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
-
-                # EXACT COPY: Data replayer's command creation
+                
+                # Use absolute quaternion for orientation
                 self.command_transform = RigidTransform(
-                    rotation=self.command_rotation,
+                    rotation=RigidTransform.rotation_from_quaternion(target_quat),
                     translation=self.command_xyz,
                     from_frame='franka_tool',
                     to_frame='world'
                 )
                 gripper_width_scaled = FC.GRIPPER_WIDTH_MAX * gripper_width
 
-                # EXACT COPY: Data replayer's ROS message publishing
+                # Publish ROS message
                 pub_traj_gen_proto_msg = PosePositionSensorMessage(
                     id=step+1, timestamp=timestamp,
                     position=self.command_transform.translation,
@@ -534,10 +530,9 @@ class ThreePhaseDataGenerator:
                     feedback_controller_sensor_msg=sensor_proto2ros_msg(
                         fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
                 )
-
                 self.robot.publish_sensor_values(ros_pub_sensor_msg)
 
-                # EXACT COPY: Data replayer's gripper control
+                # Gripper control
                 current_gripper_width = self.robot.get_gripper_width()
                 if abs(gripper_width_scaled - current_gripper_width) > 0.01:
                     grasp = True if gripper_width < 0.5 else False
@@ -545,9 +540,17 @@ class ThreePhaseDataGenerator:
                                           force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12,
                                           block=False, skill_desc="control_gripper")
 
-                # Record data only from Phase 1 to end of Phase 2 (pull drawer execution)
-                # Phase 3 and 4 (push drawer reset) are NOT recorded
+                # Record data only from Phase 1 to end of Phase 2
                 if i >= self.phase0_end and i < self.phase2_end:
+                    # Calculate delta euler for saving (for compatibility with model training)
+                    current_quat = target_quat
+                    # Ensure consistent sign for dot product
+                    if np.dot(last_quat, current_quat) < 0:
+                        current_quat = -current_quat
+                    
+                    delta_quat = RigidTransform.rotation_from_quaternion(current_quat) @ RigidTransform.rotation_from_quaternion(last_quat).T
+                    delta_euler = mat2euler(delta_quat, 'sxyz')
+                    
                     save_action = {
                         "delta": {
                             "position": delta_xyz,
@@ -556,7 +559,7 @@ class ThreePhaseDataGenerator:
                         },
                         "abs": {
                             "position": copy.deepcopy(self.command_xyz),
-                            "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
+                            "euler_angle": np.array(mat2euler(self.command_transform.rotation, 'sxyz'))
                         },
                         "gripper_width": gripper_width
                     }
@@ -566,8 +569,9 @@ class ThreePhaseDataGenerator:
                         action=save_action,
                         timestamp=timestamp
                     )
+                    last_quat = current_quat
 
-                # DEBUG: Log recording boundaries and current step
+                # DEBUG logging
                 if self.debug:
                     if i == 0:
                         print(f"[DEBUG] Recording boundaries: phase0_end={self.phase0_end}, phase2_end={self.phase2_end}, total_steps={len(position_sequence)}")
@@ -575,11 +579,8 @@ class ThreePhaseDataGenerator:
                         print(f"[DEBUG] Step {i}: Starting data recording (Phase 1)")
                     if i == self.phase2_end:
                         print(f"[DEBUG] Step {i}: Stopping data recording (end of Phase 2)")
-                    if i == len(position_sequence) - 1:
-                        print(f"[DEBUG] Step {i}: Final trajectory step")
 
             except Exception as e:
-                # EXACT COPY: Data replayer's error recovery
                 self._ee_pose_init()
                 control_rate.sleep()
                 print(f"[WARN] Move failed? : {e}")
@@ -588,13 +589,6 @@ class ThreePhaseDataGenerator:
             step += 1
             control_rate.sleep()
 
-        # DEBUG: Log final robot state before stopping skill
-        if self.debug:
-            final_pose = self.robot.get_pose()
-            print(f"[DEBUG] Final robot pose before stop: {final_pose.translation}")
-            print(f"[DEBUG] Recorded data steps: {len(self.data_collector.data_dict['action']['end_effector']['delta_position'])}")
-
-        # DO NOT call robot.stop_skill() here - it will be called by _stop_skill_safely()
         print("[INFO] Complete trajectory execution finished.")
         return True
 
@@ -894,7 +888,7 @@ class ThreePhaseDataGenerator:
                     print("[INFO] No push episodes available - skipping reset phases")
 
                 # NEW UNIFIED SYSTEM: Generate complete trajectory sequences for all phases
-                position_sequence, rotation_sequence, gripper_sequence = self._generate_complete_trajectory_sequences(
+                position_sequence, quaternion_sequence, gripper_sequence = self._generate_complete_trajectory_sequences(
                     base_episode_data, random_pose, push_episode_data)
 
                 # Initialize dynamic skill for entire trajectory execution
@@ -908,7 +902,7 @@ class ThreePhaseDataGenerator:
                 time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
                 # Execute complete trajectory using data replayer methodology
-                trajectory_success = self._execute_complete_trajectory(position_sequence, rotation_sequence, gripper_sequence)
+                trajectory_success = self._execute_complete_trajectory(position_sequence, quaternion_sequence, gripper_sequence)
 
                 print("Trajectory execution finished. Stopping dynamic skill...")
 
