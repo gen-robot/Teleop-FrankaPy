@@ -105,8 +105,6 @@ class RealDataCollection:
                 # Compute target pose
                 self.command_xyz += delta_xyz
                 self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
-                # u, _, vh = np.linalg.svd(self.command_rotation)
-                # self.command_rotation = np.matmul(u, vh)
 
                 timestamp = rospy.Time.now().to_time()-self.init_time
 

@@ -4,7 +4,7 @@
 
 ``` bash 
 sudo apt install ros-melodic-libfranka ros-melodic-franka-ros ros-melodic-control-msgs # you can change to noetic
-conda create -n franka-teleop python=3.8 -y # 3.8 is ok, and maybe 3.10 is also ok, but we recommend 3.8 for stable
+conda create -n franka-teleop python=3.10 -y # 3.8(stable) / 3.10
 conda activate franka-teleop
 pip install colcon-common-extensions "empy==3.3.4" lark-parser lxml netifaces pyyaml rosdistro vcstool setuptools
 cd frankapy 
@@ -57,12 +57,17 @@ cd frankapy
    ```bash
    python scripts/reset_arm.py
    ```
-4. See example scripts in the examples/ and scripts/ folders to learn how to use the FrankaPy python package.
-   If you want to use `space_mouse to teleop and collect data`, you should follow the [instruction](./frankapy/examples/data_collection/README.md)
 
-5. for data collection, you can read [doc](frankapy/examples/data_collection/README.md)
+4. Please note that if you are using a custom gripper or no gripper, please set the with_gripper=True flag in frankapy/franka_arm.py to False as well as set the with_gripper=1 flag in bash_scripts/start_control_pc.sh to 0.
 
-6. Please note that if you are using a custom gripper or no gripper, please set the with_gripper=True flag in frankapy/franka_arm.py to False as well as set the with_gripper=1 flag in bash_scripts/start_control_pc.sh to 0.
+## Data collection
+
+See example scripts in the examples/ and scripts/ folders to learn how to use the FrankaPy python package.
+
+If you want to use `space_mouse to teleop and collect data`, you should follow the [instruction](./frankapy/examples/data_collection/README.md)
+
+## [Deploy](frankapy/deploy/README.md) 
+
 
 [frankapy API Documentation](https://iamlab-cmu.github.io/frankapy/)
 
