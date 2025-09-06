@@ -52,9 +52,9 @@ See detailed instructions [here](https://github.com/protocolbuffers/protobuf/blo
    sudo apt install ros-melodic-libfranka ros-melodic-franka-ros
    ```
 
-3. First source into your virtualenv or conda env (Python 3.8 is ok. You can try other version). Then:
+3. First source into your virtualenv or conda env (Python 3.8 / 3.10). Then:
    ```bash
-   conda activate <your-conda-env> # we recommend python=3.8
+   conda activate <your-conda-env> # we recommend python=3.8(stable)/3.10(kinematic)
    pip install -e .
    cd catkin_ws/src/autolab_core
    pip install -e .

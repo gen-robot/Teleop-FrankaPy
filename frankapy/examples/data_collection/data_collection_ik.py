@@ -1,10 +1,12 @@
-import os
-import time
-import json
-import tyro
 import numpy as np
+import time
+import copy
+import json
+import os
+import tyro
+import rospy
 from dataclasses import dataclass
-from scipy.spatial.transform import Rotation as R
+
 from space_mouse_wrapper.space_mouse import SpaceMouse
 from realsense_wrapper.realsense_d435 import RealsenseAPI
 from autolab_core import RigidTransform
@@ -13,11 +15,13 @@ from frankapy.franka_constants import FrankaConstants as FC
 from examples.data_collection.vla_data_collector import VLADataCollector
 from transforms3d.euler import euler2quat, euler2mat, mat2euler
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
-from frankapy.proto import PosePositionSensorMessage, CartesianImpedanceSensorMessage
-import rospy
-import copy
+from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
 
-class RealDataCollection:
+# Import IK related classes
+from kinematics.frankapy_utils import IKSolver, DynamicJointTrajectoryPublisher
+
+
+class IKDataCollection:
     def __init__(self, args, robot: FrankaArm, cameras: RealsenseAPI, use_space_mouse: bool=False):
         self.robot: FrankaArm = robot
         self.cameras: RealsenseAPI = cameras
@@ -28,6 +32,13 @@ class RealDataCollection:
         if use_space_mouse:
             self.space_mouse = SpaceMouse(vendor_id=0x256f, product_id=0xc635)
 
+        # Initialize IK solver and trajectory publisher
+        self.ik_solver = IKSolver(
+            urdf_path="/home/weibingwen/Documents/assets/panda/panda_v3.urdf",
+            target_link_name="panda_hand_tcp"
+        )
+        self.traj_publisher = DynamicJointTrajectoryPublisher()
+
         self.episode_idx = 0  # Default episode index
         self.action_steps = 0
         self.instruction = args.instruction
@@ -35,6 +46,7 @@ class RealDataCollection:
         self.init_rotation = None
         self.command_xyz = None
         self.command_rotation = None
+        self.current_joints = None
         self.control_frequency = 5
         self.control_time_step = 1.0/self.control_frequency
         self.last_gripper_width = None
@@ -43,6 +55,9 @@ class RealDataCollection:
         self.pos_scale = args.pos_scale
         self.rot_scale = args.rot_scale
 
+        # Start dynamic execution with initial joint position
+        self.dynamic_execution_started = False
+
     def ee_pose_init(self):
         time.sleep(0.5)
         pose = self.robot.get_pose()
@@ -50,6 +65,12 @@ class RealDataCollection:
         self.init_rotation = pose.rotation
         self.command_xyz = self.init_xyz
         self.command_rotation = self.init_rotation
+        self.last_gripper_width = self.robot.get_gripper_width()
+        
+        # Get current joint positions
+        self.current_joints = self.robot.get_joints()
+        print(f"[INFO] Initial pose: {pose}")
+        print(f"[INFO] Initial joints: {self.current_joints}")
 
     def _apply_control_data_clip_and_scale(self, control_tensor, offset=0.0):
         control_tensor = np.clip(control_tensor, -1.0, 1.0)
@@ -64,53 +85,85 @@ class RealDataCollection:
 
         return np.clip(scaled_tensor, -1.0, 1.0)
 
-
     def collect_data(self):
         input("press enter to start collection")
-        print("[INFO] Starting data collection...")
+        print("[INFO] Starting IK-based data collection...")
         control_rate = rospy.Rate(self.control_frequency)
+        
         try:
             while True:
-                try:
+                try:    
                     # Read SpaceMouse controls
                     if self.use_space_mouse:
-                        control = self.space_mouse.control # xyz in range [-1, 1] in m,  roll picth yaw [-1, 1] in deg
+                        control = self.space_mouse.control # xyz in range [-1, 1] in m, roll picth yaw [-1, 1] in deg
                         control_gripper = self.space_mouse.gripper_status
                         control_quit = self.space_mouse.quit_signal
                     else:
-                        control = np.zeros((6,))
-                        control_gripper = 1 # [0,1]
+                        # Keyboard or other control input would go here
+                        control = np.zeros(6)
+                        control_gripper = 1.0
                         control_quit = False
 
                     if control_quit:
-                        print("[INFO] Data collection stopped by user.")
-                        self.robot.stop_skill()
-                        rospy.loginfo('Done')
+                        print("[INFO] Quit signal received")
                         break
 
-                    # for space mouse: roll pitch yaw -> For panda: pitch roll yaw (defined by user bingwen)
+                    # Process control input similar to data_collection.py
                     control_xyz = control[:3]
                     if self.args.user_frame:
-                        control_xyz[:2] *= -1
+                        # Transform to user frame if needed
+                        pass
 
+                    # For space mouse: roll pitch yaw -> For panda: pitch roll yaw
                     control_euler = control[3:6][[1,0,2]] * np.array([-1,-1,1])
-                    control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.35)
-                    control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.35)
+                    control_xyz = self._apply_control_data_clip_and_scale(control_xyz, 0.25)
+                    control_euler = self._apply_control_data_clip_and_scale(control_euler, 0.25)
 
                     delta_xyz = control_xyz * self.pos_scale
-                    # delta_xyz *= 0
-                    delta_euler = control_euler * self.rot_scale # z, y, x
-                    # delta_euler *= 0
+                    delta_euler = control_euler * self.rot_scale
                     delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
 
                     # Compute target pose
                     self.command_xyz += delta_xyz
                     self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
-                    # u, _, vh = np.linalg.svd(self.command_rotation)
-                    # self.command_rotation = np.matmul(u, vh)
 
-                    timestamp = rospy.Time.now().to_time()-self.init_time
+                    # Create target pose transform
+                    target_pose = RigidTransform(
+                        rotation=self.command_rotation, 
+                        translation=self.command_xyz, 
+                        from_frame='franka_tool', 
+                        to_frame='world'
+                    )
 
+                    # Solve IK to get target joint positions
+                    try:
+                        target_joints = self.ik_solver.solve_ik(self.current_joints, target_pose)
+                        print(f"[DEBUG] Target joints: {target_joints[:7]}")
+                        print(f"[DEBUG] Joint delta: {target_joints[:7] - self.current_joints}")
+                        
+                        # Start dynamic execution on first iteration
+                        # Start a new skill 
+                        if not self.dynamic_execution_started:
+                            total_duration = 1000  # Large duration for continuous execution
+                            self.traj_publisher.start_dynamic_execution(
+                                self.robot, target_joints, total_duration, buffer_time=10
+                            )
+                            self.dynamic_execution_started = True
+                            time.sleep(0.1)  # Small delay after starting
+                        
+                        # Publish joint target
+                        self.traj_publisher.publish_joint_target(target_joints, self.action_steps)
+                        
+                        # Update current joints for next iteration
+                        self.current_joints = target_joints[:7]
+                        
+                    except Exception as e:
+                        print(f"[ERROR] IK solving failed: {str(e)}")
+                        continue
+
+                    timestamp = rospy.Time.now().to_time() - self.init_time
+
+                    # Save action data (same format as data_collection.py)
                     save_action = {
                         "delta": {
                             "position": delta_xyz,
@@ -121,59 +174,49 @@ class RealDataCollection:
                             "position": copy.deepcopy(self.command_xyz),
                             "euler_angle": np.array([mat2euler(self.command_rotation, 'sxyz')])[0]
                         },
-                        "gripper_width": control_gripper
+                        "gripper_width": control_gripper,
+                        "target_joints": target_joints[:7]  # Add joint information
                     }
 
                     # Collect data
                     self.data_collector.update_data_dict(
                         instruction=self.instruction,
                         action=save_action,
-                        # xyz=delta_xyz,
-                        # quat=euler2quat(delta_euler[0],delta_euler[1],delta_euler[2],'sxyz'),
-                        # gripper_width=control_gripper,
                         timestamp=timestamp,
                     )
 
-                    self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
+                    # Handle gripper control
                     gripper_width = FC.GRIPPER_WIDTH_MAX * control_gripper
-                    # control joint and gripper
-
-                    # ros data send and control
-                    pub_traj_gen_proto_msg = PosePositionSensorMessage(
-                        id=self.action_steps+1, timestamp=timestamp, 
-                        position=self.command_transform.translation, quaternion=self.command_transform.quaternion
-                    )
-                    fb_ctrlr_proto = CartesianImpedanceSensorMessage(
-                        id=self.action_steps+1, timestamp=timestamp,
-                        translational_stiffnesses=FC.DEFAULT_TRANSLATIONAL_STIFFNESSES,
-                        rotational_stiffnesses=FC.DEFAULT_ROTATIONAL_STIFFNESSES
-                    )
-                    ros_pub_sensor_msg = make_sensor_group_msg(
-                        trajectory_generator_sensor_msg=sensor_proto2ros_msg(
-                            pub_traj_gen_proto_msg, SensorDataMessageType.POSE_POSITION),
-                        feedback_controller_sensor_msg=sensor_proto2ros_msg(
-                            fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
-                    )
-                    rospy.loginfo(f'Publishing: Steps {self.action_steps+1}, delta_xyz = {delta_xyz}')
-                    self.robot.publish_sensor_values(ros_pub_sensor_msg)
-                    if abs(gripper_width - self.last_gripper_width) > 0.02:
-                        grasp = True if control_gripper<0.5 else False
-                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
-                        self.last_gripper_width = gripper_width
+                    if abs(gripper_width - self.last_gripper_width) > 0.01:  # Only move if significant change
+                        try:
+                            if gripper_width > self.last_gripper_width:
+                                self.robot.open_gripper()
+                            else:
+                                self.robot.close_gripper()
+                            self.last_gripper_width = gripper_width
+                        except Exception as e:
+                            print(f"[WARNING] Gripper control failed: {str(e)}")
 
                     self.action_steps += 1
+                    
+                    if self.action_steps % 50 == 0:
+                        print(f"[INFO] Collected {self.action_steps} action steps")
+
                     control_rate.sleep()
+
                 except KeyboardInterrupt:
-                    print("[INFO] Data collection stopped by keyboard interrupt.")
-                    self.robot.stop_skill()
-                    rospy.loginfo('Done')
+                    print("[INFO] KeyboardInterrupt received, stopping data collection")
                     break
                 except Exception as e:
-                    print(f"[ERROR] An error occurred during data collection: {e}")
-                    control_rate.sleep()
-                    self.ee_pose_init()
+                    print(f"[ERROR] Exception in data collection loop: {str(e)}")
                     continue
+                    
         finally:
+            # Terminate dynamic execution
+            if self.dynamic_execution_started:
+                self.traj_publisher.terminate_execution()
+                print("[INFO] Dynamic execution terminated")
+            
             # Clean up resources
             if self.use_space_mouse:
                 self.space_mouse.close()
@@ -244,6 +287,7 @@ class RealDataCollection:
             "episode_idx": self.episode_idx,
             "action_steps": self.action_steps,
             "instruction": self.instruction,
+            "control_method": "ik_joints"  # Mark this as IK-based control
         }
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=4)
@@ -253,13 +297,13 @@ class RealDataCollection:
         return True
 
 
-@dataclass 
+@dataclass
 class Args:
-    """Data collection script arguments."""
+    """IK-based data collection script arguments."""
     dataset_dir: str = "datasets"  # Directory to save dataset
     task_name: str  # Task name for the dataset
     min_action_steps: int = 200  # Minimum action_steps for data collection
-    max_action_steps: int = 1000  # Maximum action_steps for data collection  
+    max_action_steps: int = 1000  # Maximum action_steps for data collection
     episode_idx: int = -1  # Episode index to save data (-1 for auto-increment)
     instruction: str  # Instruction for data collection
     user_frame: bool = False  # Use user frame
@@ -271,15 +315,12 @@ def main():
     args = tyro.cli(Args)
     robot = FrankaArm()
     cameras = RealsenseAPI()
-    collection = RealDataCollection(args, robot, cameras, use_space_mouse=True)
+    collection = IKDataCollection(args, robot, cameras, use_space_mouse=True)
+    
     # Home
     robot.reset_joints()
     robot.open_gripper()
-    # start a new skill 
-    robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE', 
-                    cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, ignore_virtual_walls = True)
-    collection.last_gripper_width = robot.get_gripper_width()
-
+    
     collection.ee_pose_init()
     collection.collect_data()
 
@@ -289,6 +330,7 @@ def main():
 
     task_dir = os.path.join(args.dataset_dir, args.task_name)
     os.makedirs(task_dir, exist_ok=True)
+    
     # Save data
     result = collection.save_data(task_dir)
     if result:

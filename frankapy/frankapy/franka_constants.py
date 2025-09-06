@@ -40,8 +40,12 @@ class FrankaConstants:
         from_frame='franka_tool', to_frame='world')
 
     # See https://frankaemika.github.io/docs/control_parameters.html
-    JOINT_LIMITS_MIN = [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
-    JOINT_LIMITS_MAX = [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    # JOINT_LIMITS_MIN = [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
+    # JOINT_LIMITS_MAX = [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+
+    # copy from franka-interface c++ code.
+    JOINT_LIMITS_MIN = [-2.88, -1.75, -2.88, -3.06, -2.88, -0.0025, -2.88]
+    JOINT_LIMITS_MAX = [2.88, 1.75, 2.88, -0.06, 2.88, 3.74, 2.88]
 
     DEFAULT_POSE_THRESHOLDS = [0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001]
     DEFAULT_JOINT_THRESHOLDS = [0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001, 0.0001]
