@@ -214,7 +214,7 @@ class ThreePhaseDataGenerator:
         print(f"Target pose: pos={target_position}, from initial pos={initial_position}")
         return target_pose
 
-    def _generate_complete_trajectory_sequences(self, base_episode_data, random_pose, recover_episode_data=None, skip_recover_connection=False):
+    def _generate_complete_trajectory_sequences(self, base_episode_data, random_pose, recover_episode_data=None, skip_recover_connection=False, recovery_enabled=True):
         """
         Generate complete trajectory sequences for all phases BEFORE execution.
         Now includes optional recover drawer reset phases.
@@ -288,7 +288,8 @@ class ThreePhaseDataGenerator:
             print(f"Phase 0: Current robot pose → Random pose (not recorded)")
             print(f"Phase 1: Random pose → Base episode start (recorded)")
             print(f"Phase 2: Execute pull drawer episode (recorded)")
-            print("[INFO] No recover episode data provided - skipping reset phases")
+            if recovery_enabled:
+                print("[INFO] No recover episode data provided - skipping reset phases")
 
         return complete_positions, complete_quaternions, complete_grippers
 
@@ -474,7 +475,7 @@ class ThreePhaseDataGenerator:
         # Prepend a zero delta for the first frame
         return np.vstack([np.zeros(3), delta_eulers])
 
-    def _execute_complete_trajectory(self, position_sequence, quaternion_sequence, gripper_sequence):
+    def _execute_complete_trajectory(self, position_sequence, quaternion_sequence, gripper_sequence, instruction_label="pull_drawer"):
         """
         Execute complete trajectory using data replayer methodology.
         Single baseline establishment, unified execution loop.
@@ -578,7 +579,7 @@ class ThreePhaseDataGenerator:
                     }
 
                     self.data_collector.update_data_dict(
-                        instruction="pull_drawer",
+                        instruction=instruction_label,
                         action=save_action,
                         timestamp=timestamp
                     )
@@ -846,7 +847,7 @@ class ThreePhaseDataGenerator:
 
         print("Robot initialized and ready for episode generation.")
 
-    def generate_episode(self, base_episode_idx=0, recover_episode_idx=None, skip_recover_connection=False, include_recovery=True):
+    def generate_episode(self, base_episode_idx=0, recover_episode_idx=None, skip_recover_connection=False, include_recovery=True, use_recover_as_base=False):
         """
         Generate a single new episode using the enhanced approach with recover drawer reset.
         Handles 'q' key abort and redo functionality.
@@ -881,12 +882,21 @@ class ThreePhaseDataGenerator:
                 print(f"Random target pose: {random_pose.translation}")
                 print(f"Position offset: {random_pose.translation - self.init_xyz}")
 
-                # Get base episode data
-                if base_episode_idx not in self.base_episodes:
-                    print(f"Error: Base episode {base_episode_idx} not found!")
-                    return False
-
-                base_episode_data = self.base_episodes[base_episode_idx]
+                # Get episode data for the primary task (pull or recover as base)
+                if not use_recover_as_base:
+                    if base_episode_idx not in self.base_episodes:
+                        print(f"Error: Base episode {base_episode_idx} not found!")
+                        return False
+                    base_episode_data = self.base_episodes[base_episode_idx]
+                    instruction_label = "pull_drawer"
+                    print(f"Using pull base episode {base_episode_idx}")
+                else:
+                    if recover_episode_idx is None or recover_episode_idx not in self.recover_episodes:
+                        print(f"Error: Recover episode {recover_episode_idx} not found for all_record second run!")
+                        return False
+                    base_episode_data = self.recover_episodes[recover_episode_idx]
+                    instruction_label = "recover_drawer"
+                    print(f"Using recover base episode {recover_episode_idx}")
 
                 # Get recover episode data if available and requested
                 recover_episode_data = None
@@ -905,7 +915,8 @@ class ThreePhaseDataGenerator:
 
                 # NEW UNIFIED SYSTEM: Generate complete trajectory sequences for all phases
                 position_sequence, quaternion_sequence, gripper_sequence = self._generate_complete_trajectory_sequences(
-                    base_episode_data, random_pose, recover_episode_data, skip_recover_connection=skip_recover_connection)
+                    base_episode_data, random_pose, recover_episode_data,
+                    skip_recover_connection=skip_recover_connection, recovery_enabled=include_recovery)
 
                 # Initialize dynamic skill for entire trajectory execution
                 current_pose = self.robot.get_pose()
@@ -918,7 +929,7 @@ class ThreePhaseDataGenerator:
                 time.sleep(FC.DYNAMIC_SKILL_WAIT_TIME)
 
                 # Execute complete trajectory using data replayer methodology
-                trajectory_success = self._execute_complete_trajectory(position_sequence, quaternion_sequence, gripper_sequence)
+                trajectory_success = self._execute_complete_trajectory(position_sequence, quaternion_sequence, gripper_sequence, instruction_label=instruction_label)
 
                 print("Trajectory execution finished. Stopping dynamic skill...")
 
@@ -1095,6 +1106,8 @@ def main():
 
         for i in range(args.num_episodes):
             print(f"\n=== Episode {i+1}/{args.num_episodes} ===")
+            if args.all_record:
+                print("[MODE] all_record enabled: running 0-1-2 twice, no recovery phases")
 
             # Ask user to start episode (robot is already at HOME_POSE)
             #input("[INFO] Press enter to start episode generation")
@@ -1105,28 +1118,48 @@ def main():
             else:
                 base_episode_idx = args.base_episode
 
-            # Select recover episode
+            # Select recover episode (skip selection/logging when all_record is enabled)
             recover_episode_idx = None
-            if len(generator.recover_episodes) > 0:
-                if args.random_recover_episodes:
-                    recover_episode_idx = np.random.choice(list(generator.recover_episodes.keys()))
-                elif args.recover_episode is not None:
-                    recover_episode_idx = args.recover_episode
+            if not args.all_record:
+                if len(generator.recover_episodes) > 0:
+                    if args.random_recover_episodes:
+                        recover_episode_idx = np.random.choice(list(generator.recover_episodes.keys()))
+                    elif args.recover_episode is not None:
+                        recover_episode_idx = args.recover_episode
 
             print(f"Using pull drawer episode {base_episode_idx} for generation")
-            if recover_episode_idx is not None:
-                print(f"Using recover drawer episode {recover_episode_idx} starting from frame {args.recover_start_frame} for reset")
+            if not args.all_record:
+                if recover_episode_idx is not None:
+                    print(f"Using recover drawer episode {recover_episode_idx} starting from frame {args.recover_start_frame} for reset")
+                else:
+                    print("No recover drawer episode selected - manual reset required")
             else:
-                print("No recover drawer episode selected - manual reset required")
+                # For all_record, report the recover episode that will be used for the second recorded run (if any)
+                if len(generator.recover_episodes) > 0:
+                    preview_recover_idx = args.recover_episode if args.recover_episode is not None else (np.random.choice(list(generator.recover_episodes.keys())) if args.random_recover_episodes else sorted(list(generator.recover_episodes.keys()))[0])
+                    print(f"[all_record] Will also record recover drawer episode {preview_recover_idx} with its own Phase 1 + 2")
 
             # Generate episodes
             if args.all_record:
-                # Generate two recorded episodes (P0+P1+P2 twice), no recovery phases
-                success_first = generator.generate_episode(base_episode_idx, recover_episode_idx=None, include_recovery=False)
+                # Prepare recover episode selection for the second recorded run
+                recover_episode_idx = None
+                if len(generator.recover_episodes) > 0:
+                    if args.random_recover_episodes:
+                        recover_episode_idx = np.random.choice(list(generator.recover_episodes.keys()))
+                    elif args.recover_episode is not None:
+                        recover_episode_idx = args.recover_episode
+                    else:
+                        # Default to first available recover episode
+                        recover_episode_idx = sorted(list(generator.recover_episodes.keys()))[0]
+
+                # Generate two recorded episodes (P0+P1+P2 twice)
+                # 1) Pull as base
+                success_first = generator.generate_episode(base_episode_idx, recover_episode_idx=None, include_recovery=False, use_recover_as_base=False)
                 if success_first:
-                    # Optionally reset to HOME before second run to re-establish Phase 0
+                    # Reset to HOME before second run to re-establish Phase 0
                     generator.robot_init_for_episode()
-                    success_second = generator.generate_episode(base_episode_idx, recover_episode_idx=None, include_recovery=False)
+                    # 2) Recover as base (recorded with its own Phase 1+2)
+                    success_second = generator.generate_episode(base_episode_idx, recover_episode_idx=recover_episode_idx, include_recovery=False, use_recover_as_base=True)
                     success = success_second
                 else:
                     success = False
