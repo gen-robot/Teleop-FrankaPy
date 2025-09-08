@@ -302,7 +302,7 @@ class ThreePhaseDataGenerator:
             to_frame='world'
         )
         target_pose = random_pose
-        duration = 2.0
+        duration = 1.5
         num_steps = int(duration * self.control_frequency)
 
         # Generate smooth delta position and absolute quaternion sequences
@@ -321,7 +321,7 @@ class ThreePhaseDataGenerator:
         end_pose = RigidTransform(rotation=first_orientation, translation=first_position,
                                 from_frame='franka_tool', to_frame='world')
 
-        duration = np.random.uniform(2.2, 3.0)
+        duration = np.random.uniform(2.2, 3.5)
         num_steps = int(duration * self.control_frequency)
 
         # Generate smooth delta position and absolute quaternion sequences
@@ -345,7 +345,7 @@ class ThreePhaseDataGenerator:
                                    from_frame='franka_tool', to_frame='world')
 
         # Use same duration approach as Phase 1
-        duration = 3.0
+        duration = 2.0
         num_steps = int(duration * self.control_frequency)
 
         # Generate smooth delta position and absolute quaternion sequences
