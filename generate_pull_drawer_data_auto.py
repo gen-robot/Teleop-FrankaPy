@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """
-Enhanced trajectory generation script for pull_drawer dataset with automated push drawer reset.
+Enhanced trajectory generation script for pull_drawer dataset with automated recover drawer reset.
 
 Phase 0: Initialization movement (NOT recorded) - move from HOME_POSE to random pose
 Phase 1: Connection movement (recorded) - move from random pose to pull episode start
 Phase 2: Execute pull drawer episode (recorded)
-Phase 3: Connection movement (NOT recorded) - move from pull end to push episode start frame
-Phase 4: Execute push drawer episode from start frame (NOT recorded) - automated reset
+Phase 3: Connection movement (NOT recorded) - move from pull end to recover episode start frame
+Phase 4: Execute recover (push) drawer episode from start frame (NOT recorded) - automated reset
 
 Only Phase 1 and Phase 2 are recorded for training data. Phase 3 and 4 provide automated reset.
 
+All-record mode (--all_record):
+- Runs Phase 0 → 1 → 2 twice, back-to-back.
+- No Phase 3 or 4 are executed in this mode.
+- Each 0-1-2 run is saved as a separate episode using existing numbering.
+
 Usage:
-    python3 generate_pull_drawer_data_auto.py --num_episodes 5 --base_episode 2 --push_episode 0 --push_start_frame 10 --new_dataset_dir datasets/yukun/pull_drawer_new2 --pos_x_range -0.10 0.10 --pos_y_range -0.17 0.0 --pos_z_range -0.05 0.10
+    python3 generate_pull_drawer_data_auto.py --num_episodes 5 --base_episode 2 --recover_episode 0 --recover_start_frame 10 --all_record --new_dataset_dir datasets/yukun/pull_drawer_new2 --pos_x_range -0.10 0.10 --pos_y_range -0.17 0.0 --pos_z_range -0.05 0.10
 """
 
 import os
@@ -39,15 +44,15 @@ import rospy
 
 class ThreePhaseDataGenerator:
     def __init__(self, base_dataset_dir="pull_drawer", new_dataset_dir="pull_drawer_new",
-                 push_dataset_dir="push_drawer", push_start_frame=10, pos_x_range=None, pos_y_range=None, pos_z_range=None, debug=False):
+                 recover_dataset_dir="push_drawer", recover_start_frame=10, pos_x_range=None, pos_y_range=None, pos_z_range=None, debug=False):
         """
-        Initialize the three-phase data generator with push drawer reset functionality.
+        Initialize the three-phase data generator with recover (push) drawer reset functionality.
 
         Args:
             base_dataset_dir: Directory containing the original pull_drawer dataset
             new_dataset_dir: Directory to save new generated episodes
-            push_dataset_dir: Directory containing the push_drawer dataset for reset
-            push_start_frame: Frame number to start push episode execution from (default: 10)
+            recover_dataset_dir: Directory containing the recover (push) dataset for reset
+            recover_start_frame: Frame number to start recover episode execution from (default: 10)
             pos_x_range: Position offset range for X axis [min, max] in meters
             pos_y_range: Position offset range for Y axis [min, max] in meters
             pos_z_range: Position offset range for Z axis [min, max] in meters
@@ -55,8 +60,8 @@ class ThreePhaseDataGenerator:
         """
         self.base_dataset_dir = base_dataset_dir
         self.new_dataset_dir = new_dataset_dir
-        self.push_dataset_dir = push_dataset_dir
-        self.push_start_frame = push_start_frame
+        self.recover_dataset_dir = recover_dataset_dir
+        self.recover_start_frame = recover_start_frame
         self.debug = debug
         self.control_frequency = 5  # Hz, same as original data collection
 
@@ -68,7 +73,7 @@ class ThreePhaseDataGenerator:
 
         # Load base datasets
         self.base_episodes = self._load_base_episodes()
-        self.push_episodes = self._load_push_episodes()
+        self.recover_episodes = self._load_recover_episodes()
 
         # Create new dataset directory
         os.makedirs(self.new_dataset_dir, exist_ok=True)
@@ -122,29 +127,29 @@ class ThreePhaseDataGenerator:
                     
         return base_episodes
 
-    def _load_push_episodes(self):
-        """Load all push episodes from the push_drawer dataset."""
-        push_episodes = {}
-        if not os.path.exists(self.push_dataset_dir):
-            print(f"Warning: Push dataset directory {self.push_dataset_dir} not found. Push reset will be disabled.")
-            return push_episodes
+    def _load_recover_episodes(self):
+        """Load all recover (push) episodes from the recover dataset."""
+        recover_episodes = {}
+        if not os.path.exists(self.recover_dataset_dir):
+            print(f"Warning: Recover dataset directory {self.recover_dataset_dir} not found. Recovery will be disabled.")
+            return recover_episodes
 
-        episode_dirs = [d for d in os.listdir(self.push_dataset_dir)
-                       if d.startswith('episode_') and os.path.isdir(os.path.join(self.push_dataset_dir, d))]
+        episode_dirs = [d for d in os.listdir(self.recover_dataset_dir)
+                       if d.startswith('episode_') and os.path.isdir(os.path.join(self.recover_dataset_dir, d))]
 
         for episode_dir in episode_dirs:
             episode_idx = int(episode_dir.split('_')[1])
-            data_path = os.path.join(self.push_dataset_dir, episode_dir, 'data.npy')
+            data_path = os.path.join(self.recover_dataset_dir, episode_dir, 'data.npy')
 
             if os.path.exists(data_path):
                 try:
                     episode_data = np.load(data_path, allow_pickle=True).item()
-                    push_episodes[episode_idx] = episode_data
-                    print(f"Loaded push episode {episode_idx}")
+                    recover_episodes[episode_idx] = episode_data
+                    print(f"Loaded recover episode {episode_idx}")
                 except Exception as e:
-                    print(f"Failed to load push episode {episode_idx}: {e}")
+                    print(f"Failed to load recover episode {episode_idx}: {e}")
 
-        return push_episodes
+        return recover_episodes
 
     def _get_next_episode_idx(self):
         """Get the next episode index for the new dataset."""
@@ -209,16 +214,16 @@ class ThreePhaseDataGenerator:
         print(f"Target pose: pos={target_position}, from initial pos={initial_position}")
         return target_pose
 
-    def _generate_complete_trajectory_sequences(self, base_episode_data, random_pose, push_episode_data=None):
+    def _generate_complete_trajectory_sequences(self, base_episode_data, random_pose, recover_episode_data=None, skip_recover_connection=False):
         """
         Generate complete trajectory sequences for all phases BEFORE execution.
-        Now includes optional push drawer reset phases.
+        Now includes optional recover drawer reset phases.
         Returns sequences in data replayer format.
 
         Args:
             base_episode_data: Base episode data for Phase 2 (pull drawer)
             random_pose: Pre-generated random pose for Phase 0 target
-            push_episode_data: Optional push episode data for reset phases
+            recover_episode_data: Optional recover episode data for reset phases
         """
         print("Generating complete trajectory sequences for all phases...")
 
@@ -244,16 +249,21 @@ class ThreePhaseDataGenerator:
         complete_quaternions = np.vstack([phase0_quaternions, phase1_quaternions, phase2_quaternions])
         complete_grippers = np.concatenate([phase0_grippers, phase1_grippers, phase2_grippers])
 
-        # Add push drawer reset phases if available (not recorded)
-        if push_episode_data is not None:
-            # Phase 3: Connection to push episode frame 10 (not recorded)
-            phase3_positions, phase3_quaternions, phase3_grippers = self._generate_push_connection_sequence(
-                base_episode_data, push_episode_data)
+        # Add recover drawer reset phases if available (not recorded)
+        if recover_episode_data is not None:
+            phase3_positions = np.zeros((0, 3))
+            phase3_quaternions = np.zeros((0, 4))
+            phase3_grippers = np.zeros((0,))
 
-            # Phase 4: Execute push episode from frame 10 (not recorded)
-            phase4_positions, phase4_quaternions, phase4_grippers = self._generate_push_execution_sequence(push_episode_data)
+            if not skip_recover_connection:
+                # Phase 3: Connection to recover episode start frame (not recorded)
+                phase3_positions, phase3_quaternions, phase3_grippers = self._generate_recover_connection_sequence(
+                    base_episode_data, recover_episode_data)
 
-            # Add push phases to complete trajectory
+            # Phase 4: Execute recover episode from start frame (not recorded)
+            phase4_positions, phase4_quaternions, phase4_grippers = self._generate_recover_execution_sequence(recover_episode_data)
+
+            # Add recover phases to complete trajectory
             complete_positions = np.vstack([complete_positions, phase3_positions, phase4_positions])
             complete_quaternions = np.vstack([complete_quaternions, phase3_quaternions, phase4_quaternions])
             complete_grippers = np.concatenate([complete_grippers, phase3_grippers, phase4_grippers])
@@ -265,8 +275,11 @@ class ThreePhaseDataGenerator:
             print(f"Phase 0: Current robot pose → Random pose (not recorded)")
             print(f"Phase 1: Random pose → Base episode start (recorded)")
             print(f"Phase 2: Execute pull drawer episode (recorded)")
-            print(f"Phase 3: Connection to push episode frame {self.push_start_frame} (not recorded)")
-            print(f"Phase 4: Execute push drawer episode from frame {self.push_start_frame} (not recorded)")
+            if skip_recover_connection:
+                print(f"Phase 3: Skipped (no connection in all_record mode)")
+            else:
+                print(f"Phase 3: Connection to recover episode frame {self.recover_start_frame} (not recorded)")
+            print(f"Phase 4: Execute recover drawer episode from frame {self.recover_start_frame} (not recorded)")
         else:
             # Calculate steps to be saved (Phase 1 + Phase 2)
             steps_to_save = len(phase1_positions) + len(phase2_positions)
@@ -275,7 +288,7 @@ class ThreePhaseDataGenerator:
             print(f"Phase 0: Current robot pose → Random pose (not recorded)")
             print(f"Phase 1: Random pose → Base episode start (recorded)")
             print(f"Phase 2: Execute pull drawer episode (recorded)")
-            print("[INFO] No push episode data provided - skipping reset phases")
+            print("[INFO] No recover episode data provided - skipping reset phases")
 
         return complete_positions, complete_quaternions, complete_grippers
 
@@ -317,18 +330,18 @@ class ThreePhaseDataGenerator:
 
         return delta_positions, absolute_quaternions, grippers
 
-    def _generate_push_connection_sequence(self, pull_episode_data, push_episode_data):
-        """Generate Phase 3: Connection from end of pull episode to push episode start frame (not recorded)"""
+    def _generate_recover_connection_sequence(self, pull_episode_data, recover_episode_data):
+        """Generate Phase 3: Connection from end of pull episode to recover episode start frame (not recorded)"""
         # Start pose: end of pull episode (last frame)
         pull_end_position = pull_episode_data['state']['end_effector']['position'][-1]
         pull_end_orientation = pull_episode_data['state']['end_effector']['orientation'][-1]
         start_pose = RigidTransform(rotation=pull_end_orientation, translation=pull_end_position,
                                   from_frame='franka_tool', to_frame='world')
 
-        # Target pose: specified start frame of push episode (like Phase 1 connects to frame 0 of pull episode)
-        push_start_position = push_episode_data['state']['end_effector']['position'][self.push_start_frame]
-        push_start_orientation = push_episode_data['state']['end_effector']['orientation'][self.push_start_frame]
-        target_pose = RigidTransform(rotation=push_start_orientation, translation=push_start_position,
+        # Target pose: specified start frame of recover episode (like Phase 1 connects to frame 0 of pull episode)
+        recover_start_position = recover_episode_data['state']['end_effector']['position'][self.recover_start_frame]
+        recover_start_orientation = recover_episode_data['state']['end_effector']['orientation'][self.recover_start_frame]
+        target_pose = RigidTransform(rotation=recover_start_orientation, translation=recover_start_position,
                                    from_frame='franka_tool', to_frame='world')
 
         # Use same duration approach as Phase 1
@@ -339,23 +352,23 @@ class ThreePhaseDataGenerator:
         delta_positions, absolute_quaternions = self._generate_smooth_delta_sequence(start_pose, target_pose, num_steps)
         grippers = np.full(num_steps, 1.0)  # Open gripper
 
-        print(f"[DEBUG] Phase 3: Connecting to push episode frame {self.push_start_frame} (like Phase 1 connects to frame 0)")
-        print(f"[DEBUG] This allows Phase 4 to use original push episode deltas from frame {self.push_start_frame}")
+        print(f"[DEBUG] Phase 3: Connecting to recover episode frame {self.recover_start_frame} (like Phase 1 connects to frame 0)")
+        print(f"[DEBUG] This allows Phase 4 to use original recover episode deltas from frame {self.recover_start_frame}")
 
         return delta_positions, absolute_quaternions, grippers
 
-    def _generate_push_execution_sequence(self, push_episode_data):
-        """Generate Phase 4: Execute push episode starting from specified frame (not recorded)"""
-        # Use original push episode deltas for position
-        push_positions = push_episode_data["action"]["end_effector"]["delta_position"][self.push_start_frame:]
+    def _generate_recover_execution_sequence(self, recover_episode_data):
+        """Generate Phase 4: Execute recover episode starting from specified frame (not recorded)"""
+        # Use original recover episode deltas for position
+        recover_positions = recover_episode_data["action"]["end_effector"]["delta_position"][self.recover_start_frame:]
         
         # Use absolute quaternions for orientation
-        push_quaternions = push_episode_data["state"]["end_effector"]["orientation"][self.push_start_frame:]
-        push_grippers = push_episode_data["action"]["end_effector"]["gripper_width"][self.push_start_frame:]
+        recover_quaternions = recover_episode_data["state"]["end_effector"]["orientation"][self.recover_start_frame:]
+        recover_grippers = recover_episode_data["action"]["end_effector"]["gripper_width"][self.recover_start_frame:]
 
-        print(f"[DEBUG] Phase 4: Using original push episode data from frame {self.push_start_frame} onwards")
+        print(f"[DEBUG] Phase 4: Using original recover episode data from frame {self.recover_start_frame} onwards")
 
-        return push_positions, push_quaternions, push_grippers
+        return recover_positions, recover_quaternions, recover_grippers
 
     def _generate_smooth_delta_sequence(self, start_pose, end_pose, num_steps):
         """
@@ -833,14 +846,15 @@ class ThreePhaseDataGenerator:
 
         print("Robot initialized and ready for episode generation.")
 
-    def generate_episode(self, base_episode_idx=0, push_episode_idx=None):
+    def generate_episode(self, base_episode_idx=0, recover_episode_idx=None, skip_recover_connection=False, include_recovery=True):
         """
-        Generate a single new episode using the enhanced approach with push drawer reset.
+        Generate a single new episode using the enhanced approach with recover drawer reset.
         Handles 'q' key abort and redo functionality.
 
         Args:
             base_episode_idx: Index of base episode to use for Phase 2 (pull drawer)
-            push_episode_idx: Index of push episode to use for reset phases (optional)
+            recover_episode_idx: Index of recover episode to use for reset phases (optional)
+            skip_recover_connection: In all_record mode, skip the Phase 3 connection and run only recovery execution
 
         Returns:
             bool: Success status
@@ -874,22 +888,24 @@ class ThreePhaseDataGenerator:
 
                 base_episode_data = self.base_episodes[base_episode_idx]
 
-                # Get push episode data if available and requested
-                push_episode_data = None
-                if push_episode_idx is not None and push_episode_idx in self.push_episodes:
-                    push_episode_data = self.push_episodes[push_episode_idx]
-                    print(f"Using push episode {push_episode_idx} for reset phases")
-                elif len(self.push_episodes) > 0:
-                    # Use first available push episode if none specified
-                    push_episode_idx = list(self.push_episodes.keys())[0]
-                    push_episode_data = self.push_episodes[push_episode_idx]
-                    print(f"Using default push episode {push_episode_idx} for reset phases")
-                else:
-                    print("[INFO] No push episodes available - skipping reset phases")
+                # Get recover episode data if available and requested
+                recover_episode_data = None
+                if include_recovery:
+                    if recover_episode_idx is not None and recover_episode_idx in self.recover_episodes:
+                        recover_episode_data = self.recover_episodes[recover_episode_idx]
+                        print(f"Using recover episode {recover_episode_idx} for reset phases")
+                    elif len(self.recover_episodes) > 0:
+                        # Use first available recover episode if none specified or fallback needed
+                        if recover_episode_idx is None or recover_episode_idx not in self.recover_episodes:
+                            recover_episode_idx = list(self.recover_episodes.keys())[0]
+                        recover_episode_data = self.recover_episodes[recover_episode_idx]
+                        print(f"Using default recover episode {recover_episode_idx} for reset phases")
+                    else:
+                        print("[INFO] No recover episodes available - skipping reset phases")
 
                 # NEW UNIFIED SYSTEM: Generate complete trajectory sequences for all phases
                 position_sequence, quaternion_sequence, gripper_sequence = self._generate_complete_trajectory_sequences(
-                    base_episode_data, random_pose, push_episode_data)
+                    base_episode_data, random_pose, recover_episode_data, skip_recover_connection=skip_recover_connection)
 
                 # Initialize dynamic skill for entire trajectory execution
                 current_pose = self.robot.get_pose()
@@ -1023,16 +1039,17 @@ class ThreePhaseDataGenerator:
 
 def get_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Enhanced trajectory data generation for pull_drawer dataset with push drawer reset.")
+    parser = argparse.ArgumentParser(description="Enhanced trajectory data generation for pull_drawer dataset with recover (push) drawer reset.")
     parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to generate.")
     parser.add_argument("--base_episode", type=int, default=0, help="Base episode index to use for Phase 2 (pull drawer).")
-    parser.add_argument("--push_episode", type=int, default=0, help="Push episode index to use for reset phases (optional).")
-    parser.add_argument("--push_start_frame", type=int, default=0, help="Frame number to start push episode execution from (default: 10).")
+    parser.add_argument("--recover_episode", type=int, default=None, help="Recover episode index to use for reset phases (optional).")
+    parser.add_argument("--recover_start_frame", type=int, default=0, help="Frame number to start recover episode execution from (default: 10).")
+    parser.add_argument("--all_record", action="store_true", help="Record two episodes per run (P1+P2 twice), then run recovery (Phase 4).")
     parser.add_argument("--base_dataset_dir", type=str, default="datasets/yukun/push_drawer_new_small", help="Directory containing base pull_drawer dataset.")
-    parser.add_argument("--push_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new_small", help="Directory containing push_drawer dataset.")
+    parser.add_argument("--recover_dataset_dir", type=str, default="datasets/yukun/pull_drawer_new_small", help="Directory containing recover (push) dataset.")
     parser.add_argument("--new_dataset_dir", type=str, default="datasets/yukun/push_drawer_new_small", help="Directory to save new episodes.")
     parser.add_argument("--random_base_episodes", action="store_true", help="Use random base episodes for each generation.")
-    parser.add_argument("--random_push_episodes", action="store_true", help="Use random push episodes for each reset.")
+    parser.add_argument("--random_recover_episodes", action="store_true", help="Use random recover episodes for each reset.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
     # Position offset ranges (in meters, per axis)
@@ -1047,9 +1064,9 @@ def main():
     """Main function to run the data generation."""
     args = get_arguments()
 
-    print("=== Enhanced Pull-Drawer Data Generator with Push Reset ===")
+    print("=== Enhanced Pull-Drawer Data Generator with Recover Reset ===")
     print(f"Base dataset: {args.base_dataset_dir}")
-    print(f"Push dataset: {args.push_dataset_dir}")
+    print(f"Recover dataset: {args.recover_dataset_dir}")
     print(f"New dataset: {args.new_dataset_dir}")
     print(f"Episodes to generate: {args.num_episodes}")
 
@@ -1058,8 +1075,8 @@ def main():
         generator = ThreePhaseDataGenerator(
             args.base_dataset_dir,
             args.new_dataset_dir,
-            args.push_dataset_dir,
-            args.push_start_frame,
+            args.recover_dataset_dir,
+            args.recover_start_frame,
             pos_x_range=args.pos_x_range,
             pos_y_range=args.pos_y_range,
             pos_z_range=args.pos_z_range,
@@ -1067,7 +1084,7 @@ def main():
         )
 
         print(f"Loaded {len(generator.base_episodes)} pull drawer episodes")
-        print(f"Loaded {len(generator.push_episodes)} push drawer episodes")
+        print(f"Loaded {len(generator.recover_episodes)} recover drawer episodes")
         print("Ready to start episode generation.")
 
         # Generate episodes with new flow: episode -> save -> user input -> robot init
@@ -1088,22 +1105,34 @@ def main():
             else:
                 base_episode_idx = args.base_episode
 
-            # Select push episode
-            push_episode_idx = None
-            if len(generator.push_episodes) > 0:
-                if args.random_push_episodes:
-                    push_episode_idx = np.random.choice(list(generator.push_episodes.keys()))
-                elif args.push_episode is not None:
-                    push_episode_idx = args.push_episode
+            # Select recover episode
+            recover_episode_idx = None
+            if len(generator.recover_episodes) > 0:
+                if args.random_recover_episodes:
+                    recover_episode_idx = np.random.choice(list(generator.recover_episodes.keys()))
+                elif args.recover_episode is not None:
+                    recover_episode_idx = args.recover_episode
 
             print(f"Using pull drawer episode {base_episode_idx} for generation")
-            if push_episode_idx is not None:
-                print(f"Using push drawer episode {push_episode_idx} starting from frame {args.push_start_frame} for reset")
+            if recover_episode_idx is not None:
+                print(f"Using recover drawer episode {recover_episode_idx} starting from frame {args.recover_start_frame} for reset")
             else:
-                print("No push drawer episode selected - manual reset required")
+                print("No recover drawer episode selected - manual reset required")
 
-            # Generate episode (Phase 0 + Phase 1 + Phase 2 + Phase 3 + Phase 4 + Save)
-            success = generator.generate_episode(base_episode_idx, push_episode_idx)
+            # Generate episodes
+            if args.all_record:
+                # Generate two recorded episodes (P0+P1+P2 twice), no recovery phases
+                success_first = generator.generate_episode(base_episode_idx, recover_episode_idx=None, include_recovery=False)
+                if success_first:
+                    # Optionally reset to HOME before second run to re-establish Phase 0
+                    generator.robot_init_for_episode()
+                    success_second = generator.generate_episode(base_episode_idx, recover_episode_idx=None, include_recovery=False)
+                    success = success_second
+                else:
+                    success = False
+            else:
+                # Single episode plus optional recovery phases
+                success = generator.generate_episode(base_episode_idx, recover_episode_idx)
 
             if success:
                 successful_episodes += 1
