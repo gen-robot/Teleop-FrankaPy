@@ -256,12 +256,12 @@ class RealDataCollection:
 @dataclass 
 class Args:
     """Data collection script arguments."""
-    dataset_dir: str = "datasets"  # Directory to save dataset
     task_name: str  # Task name for the dataset
+    instruction: str  # Instruction for data collection
+    dataset_dir: str = "datasets"  # Directory to save dataset
     min_action_steps: int = 200  # Minimum action_steps for data collection
     max_action_steps: int = 1000  # Maximum action_steps for data collection  
     episode_idx: int = -1  # Episode index to save data (-1 for auto-increment)
-    instruction: str  # Instruction for data collection
     user_frame: bool = False  # Use user frame
     pos_scale: float = 0.015  # The scale of xyz action
     rot_scale: float = 0.025  # The scale of rotation action

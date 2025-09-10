@@ -26,7 +26,7 @@ pip install -e .
 python -m examples.data_collection.data_collection --min_action_steps 50 --max_action_steps 1000 --instruction test --task_name bingwen  --episode_idx 1
 
 # Use ee pose -> ik -> joint impedance control in libfranka
-python -m examples.data_collection.data_collection_ik --min_action_steps 50 --max_action_steps 1000 --instruction test --task_name bingwen  --episode_idx 1 pos_scale 0.015 rot_scale 0.025 
+python -m examples.data_collection.data_collection_ik --min_action_steps 50 --max_action_steps 1000 --instruction test --task_name bingwen  --episode_idx 1 --pos_scale 0.015 --rot_scale 0.025 
 ```
 
 ### Note
