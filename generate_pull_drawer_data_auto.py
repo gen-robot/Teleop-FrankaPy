@@ -515,7 +515,10 @@ class ThreePhaseDataGenerator:
             # Check for 'q' key abort signal
             if self.quit_signal:
                 print("[INFO] Episode aborted by user ('q' key pressed)")
-                self.robot.stop_skill()
+                try:
+                    self._stop_skill_safely()
+                except Exception:
+                    pass
                 return False
 
             try:
@@ -651,7 +654,7 @@ class ThreePhaseDataGenerator:
         print("[INFO] Ensuring robot is ready for new episode...")
 
         # Simple check using franka interface status (more reliable than action client state)
-        max_wait_time = 3.0  # seconds - increased timeout
+        max_wait_time = 8.0  # seconds - increased timeout for robustness
         start_time = time.time()
 
         while time.time() - start_time < max_wait_time:
@@ -726,7 +729,7 @@ class ThreePhaseDataGenerator:
 
         # Wait for cancellation to complete WITHOUT using wait_for_result() polling
         # This avoids the PREEMPTING/DONE race condition
-        max_wait_time = 3.0  # seconds
+        max_wait_time = 5.0  # seconds - increased timeout
         start_time = time.time()
 
         print("[INFO] Waiting for skill cancellation to complete...")
@@ -780,16 +783,18 @@ class ThreePhaseDataGenerator:
             except Exception as e:
                 print(f"[DEBUG] Could not get robot pose before init: {e}")
 
-        # CRITICAL FIX: Ensure action client is in clean state before starting new episode
+        # Ensure any leftover skill is fully stopped and client is ready
+        try:
+            self._stop_skill_safely()
+        except Exception:
+            pass
+        # CRITICAL: Ensure action client is in clean state before starting new episode
         self._ensure_action_client_ready()
 
         # Additional small delay to ensure robot is fully settled after previous episode
         import time
         time.sleep(0.5)
         print("Starting robot reset sequence...")
-        
-        print("Opening gripper...")
-        self.robot.open_gripper()
 
         # Exactly like data_collection.py main()
         print("Resetting joints...")
@@ -831,8 +836,13 @@ class ThreePhaseDataGenerator:
                 print(f"[ERROR] Unexpected error during joint reset: {e}")
                 raise
 
-        
-
+        # Open gripper after joints reset
+        print("Opening gripper...")
+        try:
+            self.robot.open_gripper()
+        except Exception as e:
+            print(f"[WARN] open_gripper failed: {e}")
+            # Not fatal; continue
         # Start dynamic skill (exactly like data_collection.py)
         print("Moving to HOME_POSE...")
         self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True,
@@ -880,8 +890,8 @@ class ThreePhaseDataGenerator:
                 # Reset quit signal for this episode attempt
                 self.quit_signal = False
 
-                # Stop the initialization skill before starting Phase 0
-                self.robot.stop_skill()
+                # Stop any prior dynamic skill before starting Phase 0
+                self._stop_skill_safely()
 
                 # Robot should now be at current pose, establish baseline for random pose generation
                 current_pose = self.robot.get_pose()
