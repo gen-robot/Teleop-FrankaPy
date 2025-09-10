@@ -796,6 +796,14 @@ class ThreePhaseDataGenerator:
         time.sleep(0.5)
         print("Starting robot reset sequence...")
 
+        # Open gripper after joints reset
+        print("Opening gripper...")
+        try:
+            self.robot.open_gripper()
+        except Exception as e:
+            print(f"[WARN] open_gripper failed: {e}")
+            # Not fatal; continue
+
         # Exactly like data_collection.py main()
         print("Resetting joints...")
 
@@ -836,13 +844,7 @@ class ThreePhaseDataGenerator:
                 print(f"[ERROR] Unexpected error during joint reset: {e}")
                 raise
 
-        # Open gripper after joints reset
-        print("Opening gripper...")
-        try:
-            self.robot.open_gripper()
-        except Exception as e:
-            print(f"[WARN] open_gripper failed: {e}")
-            # Not fatal; continue
+    
         # Start dynamic skill (exactly like data_collection.py)
         print("Moving to HOME_POSE...")
         self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True,
