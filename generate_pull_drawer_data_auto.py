@@ -44,7 +44,8 @@ import rospy
 
 class ThreePhaseDataGenerator:
     def __init__(self, base_dataset_dir="pull_drawer", new_dataset_dir="pull_drawer_new",
-                 recover_dataset_dir="push_drawer", recover_start_frame=10, pos_x_range=None, pos_y_range=None, pos_z_range=None, debug=False):
+                 recover_dataset_dir="push_drawer", recover_start_frame=10, pos_x_range=None, pos_y_range=None, pos_z_range=None, debug=False,
+                 split_save_by_task=False):
         """
         Initialize the three-phase data generator with recover (push) drawer reset functionality.
 
@@ -64,6 +65,8 @@ class ThreePhaseDataGenerator:
         self.recover_start_frame = recover_start_frame
         self.debug = debug
         self.control_frequency = 5  # Hz, same as original data collection
+        # When True, save episodes to base/recover dataset dirs depending on which task is executed
+        self.split_save_by_task = split_save_by_task
 
         # Initialize robot and cameras
         # FrankaArm will handle ROS node initialization automatically
@@ -75,8 +78,9 @@ class ThreePhaseDataGenerator:
         self.base_episodes = self._load_base_episodes()
         self.recover_episodes = self._load_recover_episodes()
 
-        # Create new dataset directory
-        os.makedirs(self.new_dataset_dir, exist_ok=True)
+        # Create new dataset directory unless saving is split by task
+        if not self.split_save_by_task:
+            os.makedirs(self.new_dataset_dir, exist_ok=True)
 
         # Random pose delta limits (relative to current position)
         # Position deltas: configurable per axis
@@ -151,17 +155,24 @@ class ThreePhaseDataGenerator:
 
         return recover_episodes
 
-    def _get_next_episode_idx(self):
-        """Get the next episode index for the new dataset."""
-        if not os.path.exists(self.new_dataset_dir):
-            return 15  # Start from 15 since base dataset goes to 14
-            
-        existing_episodes = [d for d in os.listdir(self.new_dataset_dir) 
-                           if d.startswith('episode_') and os.path.isdir(os.path.join(self.new_dataset_dir, d))]
-        
+    def _get_next_episode_idx(self, dataset_dir=None):
+        """Get the next episode index for the target dataset directory.
+
+        If dataset_dir is None (legacy behavior), operate on self.new_dataset_dir and
+        start from 15 for empty dirs. Otherwise, compute for the provided directory and
+        start from 0 for empty dirs.
+        """
+        dir_to_use = dataset_dir if dataset_dir is not None else self.new_dataset_dir
+
+        if not os.path.exists(dir_to_use):
+            return 15 if (dataset_dir is None or dir_to_use == self.new_dataset_dir) else 0
+
+        existing_episodes = [d for d in os.listdir(dir_to_use)
+                             if d.startswith('episode_') and os.path.isdir(os.path.join(dir_to_use, d))]
+
         if not existing_episodes:
-            return 15
-            
+            return 15 if (dataset_dir is None or dir_to_use == self.new_dataset_dir) else 0
+
         max_idx = max([int(d.split('_')[1]) for d in existing_episodes])
         return max_idx + 1
     
@@ -961,8 +972,13 @@ class ThreePhaseDataGenerator:
                     self.robot_init_for_episode()
                     continue  # Redo the episode
 
-                # Episode completed successfully - save data
-                episode_idx = self._get_next_episode_idx()
+                # Episode completed successfully - decide where to save
+                if self.split_save_by_task:
+                    target_dir = self.recover_dataset_dir if use_recover_as_base else self.base_dataset_dir
+                else:
+                    target_dir = self.new_dataset_dir
+
+                episode_idx = self._get_next_episode_idx(target_dir)
 
                 # DEBUG: Check data collector state before saving
                 recorded_steps = len(self.data_collector.data_dict['action']['end_effector']['delta_position'])
@@ -970,13 +986,13 @@ class ThreePhaseDataGenerator:
                 if self.debug:
                     print(f"[DEBUG] Data collector steps before save: {recorded_steps}")
 
-                success = self._save_episode(episode_idx)
+                success = self._save_episode(episode_idx, target_dir)
 
                 if success:
-                    print(f"✅ Episode {episode_idx} data saved successfully")
+                    print(f"✅ Episode {episode_idx} data saved successfully to {target_dir}")
                     return True
                 else:
-                    print(f"❌ Failed to save episode {episode_idx}")
+                    print(f"❌ Failed to save episode {episode_idx} to {target_dir}")
                     return False
 
             except Exception as e:
@@ -988,18 +1004,20 @@ class ThreePhaseDataGenerator:
                     pass
                 return False
 
-    def _save_episode(self, episode_idx):
+    def _save_episode(self, episode_idx, target_dir=None):
         """
         Save the collected episode data.
 
         Args:
             episode_idx: Episode index to save
+            target_dir: Directory to save into (defaults to self.new_dataset_dir)
 
         Returns:
             bool: Success status
         """
         try:
-            episode_dir = os.path.join(self.new_dataset_dir, f"episode_{episode_idx}")
+            save_root = target_dir if target_dir is not None else self.new_dataset_dir
+            episode_dir = os.path.join(save_root, f"episode_{episode_idx}")
             os.makedirs(episode_dir, exist_ok=True)
 
             # DEBUG: Check data collector state right before save
@@ -1031,7 +1049,7 @@ class ThreePhaseDataGenerator:
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=4)
 
-            print(f"Episode {episode_idx} saved successfully with {metadata['action_steps']} steps")
+            print(f"Episode {episode_idx} saved successfully with {metadata['action_steps']} steps at {episode_dir}")
             return True
 
         except Exception as e:
@@ -1091,7 +1109,8 @@ def main():
             pos_x_range=args.pos_x_range,
             pos_y_range=args.pos_y_range,
             pos_z_range=args.pos_z_range,
-            debug=args.debug
+            debug=args.debug,
+            split_save_by_task=args.all_record
         )
 
         print(f"Loaded {len(generator.base_episodes)} pull drawer episodes")

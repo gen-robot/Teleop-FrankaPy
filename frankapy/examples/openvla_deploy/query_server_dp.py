@@ -94,9 +94,10 @@ class DiffusionPolicyDeploy:
         self.robot.reset_joints()
         self.robot.open_gripper()
         input("[INFO] Press enter to continue")
-        # start a new skill 
-        self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE', 
-                        cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, ignore_virtual_walls = True)
+        time.sleep(3.0)
+        # start a new skill
+        self.robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE',
+                             cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, ignore_virtual_walls=True)
 
     def run_inference_loop(self):
         step = 0
