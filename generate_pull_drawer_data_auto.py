@@ -16,7 +16,7 @@ All-record mode (--all_record):
 - Each 0-1-2 run is saved as a separate episode using existing numbering.
 
 Usage:
-    python3 generate_pull_drawer_data_auto.py --num_episodes 5 --base_episode 2 --recover_episode 0 --recover_start_frame 10 --all_record --new_dataset_dir datasets/yukun/pull_drawer_new2 --pos_x_range -0.10 0.10 --pos_y_range -0.17 0.0 --pos_z_range -0.05 0.10
+    python3 generate_pull_drawer_data_auto.py --num_episodes 30 --base_episode 0 --recover_episode 0 --all_record --pos_x_range -0.10 0.10 --pos_y_range -0 0.1 --pos_z_range -0.05 0.10
 """
 
 import os
@@ -787,6 +787,9 @@ class ThreePhaseDataGenerator:
         import time
         time.sleep(0.5)
         print("Starting robot reset sequence...")
+        
+        print("Opening gripper...")
+        self.robot.open_gripper()
 
         # Exactly like data_collection.py main()
         print("Resetting joints...")
@@ -828,8 +831,7 @@ class ThreePhaseDataGenerator:
                 print(f"[ERROR] Unexpected error during joint reset: {e}")
                 raise
 
-        print("Opening gripper...")
-        self.robot.open_gripper()
+        
 
         # Start dynamic skill (exactly like data_collection.py)
         print("Moving to HOME_POSE...")
