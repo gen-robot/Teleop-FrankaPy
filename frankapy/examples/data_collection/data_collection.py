@@ -273,8 +273,9 @@ def main():
     cameras = RealsenseAPI()
     collection = RealDataCollection(args, robot, cameras, use_space_mouse=True)
     # Home
-    robot.reset_joints()
     robot.open_gripper()
+    robot.reset_joints()
+    
     # start a new skill 
     robot.goto_pose(FC.HOME_POSE, duration=10, dynamic=True, buffer_time=100000000, skill_desc='MOVE', 
                     cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, ignore_virtual_walls = True)
