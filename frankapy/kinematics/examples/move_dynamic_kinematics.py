@@ -11,7 +11,7 @@ def execute_dynamic_trajectory(fa, pose_traj, T, dt):
     rospy.loginfo('Executing dynamic trajectory with real-time IK solving')
     
     # Initialize IK solver and trajectory publisher
-    ik_solver = IKSolver(urdf_path="/home/franka/Documents/bingwen/assets/panda/panda_v3.urdf",
+    ik_solver = IKSolver(urdf_path="./assets/panda/panda_v3.urdf",
                          target_link_name="panda_hand_tcp")
     traj_publisher = DynamicJointTrajectoryPublisher()
     

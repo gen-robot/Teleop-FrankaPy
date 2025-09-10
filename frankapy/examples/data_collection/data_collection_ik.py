@@ -34,7 +34,7 @@ class IKDataCollection:
 
         # Initialize IK solver and trajectory publisher
         self.ik_solver = IKSolver(
-            urdf_path="/home/weibingwen/Documents/assets/panda/panda_v3.urdf",
+            urdf_path="./assets/panda/panda_v3.urdf",
             target_link_name="panda_hand_tcp"
         )
         self.traj_publisher = DynamicJointTrajectoryPublisher()

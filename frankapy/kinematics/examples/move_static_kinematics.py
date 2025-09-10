@@ -11,7 +11,7 @@ def execute_static_trajectory(fa: FrankaArm, pose_traj, T, dt):
     rospy.loginfo('Executing static trajectory')
     
     # Initialize IK solver
-    ik_solver = IKSolver(urdf_path="/home/franka/Documents/bingwen/assets/panda/panda_v3.urdf",
+    ik_solver = IKSolver(urdf_path="./assets/panda/panda_v3.urdf",
                          target_link_name="panda_hand_tcp")
     
     # Get current joint state

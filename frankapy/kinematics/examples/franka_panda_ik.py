@@ -13,7 +13,7 @@ from viser.extras import ViserUrdf
 def main():
     """Main function for basic IK."""
 
-    urdf_path = "/home/pancake/Documents/pyroki/assets/panda/panda_v3.urdf"
+    urdf_path = "./assets/panda/panda_v3.urdf"
     urdf = yourdfpy.URDF.load(
         urdf_path,
     )
