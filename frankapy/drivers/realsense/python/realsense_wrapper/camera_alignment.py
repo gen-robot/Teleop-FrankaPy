@@ -130,7 +130,7 @@ if __name__ == "__main__":
     ref_image = Image.open("camera_ref.jpeg").convert("RGB")
     ref_image = np.array(ref_image).astype(np.uint8)
 
-    if ref_image.shape != (480, 480, 3):
+    if ref_image.shape != (480, 640, 3):
         raise ValueError(f"camera_ref.png must be 480x480x3, but got {ref_image.shape}")
 
     alpha = 0.5  # 透明度参数，可调整
@@ -139,7 +139,8 @@ if __name__ == "__main__":
         # 获取图像
         rgb = cams.get_rgb()
         # 裁剪rgb[1]：从(640,480)裁为(480,480)，方式为水平截取40:520
-        cropped = rgb[1][:, 40:520, :].astype(np.uint8)
+        # cropped = rgb[1][:, 40:520, :].astype(np.uint8)
+        cropped = rgb[1].astype(np.uint8)
 
         # 叠加两张图
         overlay = cv2.addWeighted(cropped, alpha, ref_image, 1 - alpha, 0)
