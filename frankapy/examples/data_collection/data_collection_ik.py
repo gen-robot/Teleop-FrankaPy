@@ -48,7 +48,7 @@ class IKDataCollection:
         self.command_rotation = None
         self.current_joints = None
         self.control_frequency = 5
-        self.control_time_step = 1.0/self.control_frequency
+        self.control_time_step = 1.0 / self.control_frequency
         self.last_gripper_width = None
         self.init_time = rospy.Time.now().to_time()
 
@@ -84,6 +84,16 @@ class IKDataCollection:
             raise ValueError(f"offset should in the range of 0-1, while the offset is set to be {offset}.")
 
         return np.clip(scaled_tensor, -1.0, 1.0)
+
+    def _check_joint_continuity(self, current_joints, target_joints, max_step=0.1):
+        joint_diff = np.abs(target_joints - current_joints)
+        max_diff = np.max(joint_diff)
+        if max_diff > max_step:
+            print(f"[WARNING] Large joint step detected: {max_diff:.3f} rad")
+            scale = max_step / max_diff
+            limited_target = current_joints + scale * (target_joints - current_joints)
+            return limited_target
+        return target_joints
 
     def collect_data(self):
         input("press enter to start collection")
@@ -137,10 +147,9 @@ class IKDataCollection:
 
                     # Solve IK to get target joint positions
                     try:
-                        target_joints = self.ik_solver.solve_ik(self.current_joints, target_pose)
-                        print(f"[DEBUG] Target joints: {target_joints[:7]}")
-                        print(f"[DEBUG] Joint delta: {target_joints[:7] - self.current_joints}")
-                        
+                        target_joints = self.ik_solver.solve_ik(self.current_joints, target_pose)                                    
+                        target_joints = self._check_joint_continuity(self.current_joints, target_joints)
+
                         # Start dynamic execution on first iteration
                         # Start a new skill 
                         if not self.dynamic_execution_started:
@@ -155,7 +164,10 @@ class IKDataCollection:
                         self.traj_publisher.publish_joint_target(target_joints, self.action_steps)
                         
                         # Update current joints for next iteration
-                        self.current_joints = target_joints[:7]
+                        self.current_joints = self.robot.get_joints()
+                        print(f"[DEBUG] Real current joints: {self.current_joints}")
+                        print(f"[DEBUG] Target joints: {target_joints[:7]}")
+                        print(f"[DEBUG] Joint error: {target_joints[:7] - self.current_joints}")
                         
                     except Exception as e:
                         print(f"[ERROR] IK solving failed: {str(e)}")
@@ -198,6 +210,10 @@ class IKDataCollection:
                             print(f"[WARNING] Gripper control failed: {str(e)}")
 
                     self.action_steps += 1
+                    # print(f"[DEBUG] Control input: xyz={control_xyz}, euler={control_euler}")
+                    # print(f"[DEBUG] Delta: xyz={delta_xyz}, euler={delta_euler}")
+                    # print(f"[DEBUG] Command pose: xyz={self.command_xyz}, rot_euler={mat2euler(self.command_rotation, 'sxyz')}")
+                    # print(f"[DEBUG] Current vs Target joints diff: {np.linalg.norm(target_joints[:7] - self.current_joints)}")
                     
                     if self.action_steps % 50 == 0:
                         print(f"[INFO] Collected {self.action_steps} action steps")
@@ -300,12 +316,12 @@ class IKDataCollection:
 @dataclass
 class Args:
     """IK-based data collection script arguments."""
-    dataset_dir: str = "datasets"  # Directory to save dataset
     task_name: str  # Task name for the dataset
+    instruction: str  # Instruction for data collection
+    dataset_dir: str = "datasets"  # Directory to save dataset
     min_action_steps: int = 200  # Minimum action_steps for data collection
     max_action_steps: int = 1000  # Maximum action_steps for data collection
     episode_idx: int = -1  # Episode index to save data (-1 for auto-increment)
-    instruction: str  # Instruction for data collection
     user_frame: bool = False  # Use user frame
     pos_scale: float = 0.015  # The scale of xyz action
     rot_scale: float = 0.025  # The scale of rotation action
