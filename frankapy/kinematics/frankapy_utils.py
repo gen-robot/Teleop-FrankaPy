@@ -17,12 +17,11 @@ import rospy
 class IKSolver:
     """Inverse Kinematics Solver with dynamic URDF updating"""
     
-    def __init__(self, urdf_path="/home/weibingwen/Documents/assets/panda/panda_v3.urdf", 
-                 target_link_name="panda_hand_tcp"):
+    def __init__(self, urdf_path, target_link_name="panda_hand_tcp", init_joints_cfg=None):
         self.urdf_path = urdf_path
         self.target_link_name = target_link_name
         self.urdf = yourdfpy.URDF.load(urdf_path)
-        self.robot = pk.Robot.from_urdf(self.urdf)
+        self.robot = pk.Robot.from_urdf(self.urdf, default_joint_cfg=init_joints_cfg)
         rospy.loginfo(f'IK Solver initialized with URDF: {urdf_path}')
     
     def update_robot_state(self, joint_positions):
@@ -34,13 +33,15 @@ class IKSolver:
         """Solve IK for a target pose"""
         try:
             joints_state = np.concatenate([joints_state, np.array([URDF_GRIPPER_OPEN])], axis=-1)
+            # joints_state = np.concatenate([self.robot.get_joints(),np.array([self.robot.get_gripper_width()/2.0])],axis=-1),
             self.update_robot_state(joints_state)
             solution = pks.solve_ik(
                 robot=self.robot,
                 target_link_name=self.target_link_name,
                 target_position=target_pose.translation,
                 target_wxyz=np.array([target_pose.quaternion[0], target_pose.quaternion[1], 
-                                    target_pose.quaternion[2], target_pose.quaternion[3]])
+                                    target_pose.quaternion[2], target_pose.quaternion[3]]),
+                initial_guess=joints_state,
             )
             return solution
         except Exception as e:

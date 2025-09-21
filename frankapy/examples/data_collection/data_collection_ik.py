@@ -35,7 +35,8 @@ class IKDataCollection:
         # Initialize IK solver and trajectory publisher
         self.ik_solver = IKSolver(
             urdf_path="./assets/panda/panda_v3.urdf",
-            target_link_name="panda_hand_tcp"
+            target_link_name="panda_hand_tcp",
+            init_joints_cfg=np.concatenate([self.robot.get_joints(),np.array([self.robot.get_gripper_width()/2.0])],axis=-1),
         )
         self.traj_publisher = DynamicJointTrajectoryPublisher()
 
@@ -331,12 +332,12 @@ def main():
     args = tyro.cli(Args)
     robot = FrankaArm()
     cameras = RealsenseAPI()
-    collection = IKDataCollection(args, robot, cameras, use_space_mouse=True)
-    
     # Home
     robot.reset_joints()
     robot.open_gripper()
     
+    # collection
+    collection = IKDataCollection(args, robot, cameras, use_space_mouse=True)
     collection.ee_pose_init()
     collection.collect_data()
 

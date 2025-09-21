@@ -16,6 +16,7 @@ def solve_ik(
     target_link_name: str,
     target_wxyz: onp.ndarray,
     target_position: onp.ndarray,
+    initial_guess: onp.ndarray = None,
 ) -> onp.ndarray:
     """
     Solves the basic IK problem for a robot.
@@ -36,10 +37,10 @@ def solve_ik(
         jnp.array(target_link_index),
         jnp.array(target_wxyz),
         jnp.array(target_position),
+        jnp.array(initial_guess) if initial_guess is not None else None,
     )
     assert cfg.shape == (robot.joints.num_actuated_joints,)
     return onp.array(cfg)
-
 
 @jdc.jit
 def _solve_ik_jax(
@@ -47,7 +48,9 @@ def _solve_ik_jax(
     target_link_index: jax.Array,
     target_wxyz: jax.Array,
     target_position: jax.Array,
+    initial_guess: jax.Array = None,
 ) -> jax.Array:
+    """Single IK solve with optional initial guess."""
     joint_var = robot.joint_var_cls(0)
     factors = [
         pk.costs.pose_cost_analytic_jac(
@@ -66,6 +69,23 @@ def _solve_ik_jax(
             weight=100.0,
         ),
     ]
+    
+    # Add initial guess cost if provided
+    if initial_guess is not None:
+        factors.append(
+            pk.costs.rest_cost(
+                joint_var,
+                initial_guess,
+                weight=1.0,
+            )
+        )
+    
+    # Set up initial values
+    if initial_guess is not None:
+        initial_vals = jaxls.VarValues.make((joint_var.with_value(initial_guess),))
+    else:
+        initial_vals = None
+    
     sol = (
         jaxls.LeastSquaresProblem(factors, [joint_var])
         .analyze()
@@ -73,6 +93,7 @@ def _solve_ik_jax(
             verbose=False,
             linear_solver="dense_cholesky",
             trust_region=jaxls.TrustRegionConfig(lambda_initial=1.0),
+            initial_vals=initial_vals,
         )
     )
     return sol[joint_var]
