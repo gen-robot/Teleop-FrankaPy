@@ -16,7 +16,7 @@ from examples.data_collection.vla_data_collector import VLADataCollector
 from transforms3d.euler import euler2quat, euler2mat, mat2euler
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
-
+from kinematics import PANDA_URDF_PATH
 # Import IK related classes
 from kinematics.frankapy_utils import IKSolver, DynamicJointTrajectoryPublisher
 
@@ -34,7 +34,7 @@ class IKDataCollection:
 
         # Initialize IK solver and trajectory publisher
         self.ik_solver = IKSolver(
-            urdf_path="./assets/panda/panda_v3.urdf",
+            urdf_path=PANDA_URDF_PATH,
             target_link_name="panda_hand_tcp",
             init_joints_cfg=np.concatenate([self.robot.get_joints(),np.array([self.robot.get_gripper_width()/2.0])],axis=-1),
         )

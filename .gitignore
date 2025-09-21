@@ -3,3 +3,4 @@ datasets/
 logs/
 .vscode/
 camera_captures
+frankapy/assets/*

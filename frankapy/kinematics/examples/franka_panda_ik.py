@@ -8,15 +8,14 @@ import yourdfpy
 import numpy as np
 import pyroki as pk
 import kinematics.solution as pks
+from kinematics import PANDA_URDF_PATH
 from viser.extras import ViserUrdf
 
 def main():
     """Main function for basic IK."""
 
-    urdf_path = "./assets/panda/panda_v3.urdf"
-    urdf = yourdfpy.URDF.load(
-        urdf_path,
-    )
+    urdf_path = PANDA_URDF_PATH
+    urdf = yourdfpy.URDF.load(urdf_path,)
     target_link_name = "panda_hand_tcp" # corresponding to urdf file.
 
     # Create robot.

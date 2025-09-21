@@ -4,23 +4,25 @@ import time
 import json
 import tyro
 import rospy
+import yourdfpy
 import threading
 import numpy as np
+import pyroki as pk
 from tqdm import tqdm
-from typing import Optional
+from typing import Optional, List
 from termcolor import cprint
 from dataclasses import dataclass
 from scipy.spatial.transform import Rotation as R
 from physics_datagen.ros_toolkit import Ros_listener, run_publisher
-from physics_datagen.pyroki_solver import solve_motion, init_pyroki
 
 # Import RealsenseAPI wrapper
 from realsense_wrapper import RealsenseAPI
 from frankapy import FrankaArm, SensorDataMessageType
 from frankapy import FrankaConstants as FC
-from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
-from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
+from frankapy.proto import JointPositionSensorMessage
 from franka_interface_msgs.msg import SensorDataGroup
+from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
+from kinematics.solution.solve_ik import solve_batch_ik_with_continuity
 
 @dataclass
 class Args:
@@ -133,6 +135,56 @@ def control_thread(fa, joint_state, joints_traj, init_time, dir_name):
     with open(f"{dir_name}/control.json", "w") as f:
         json.dump(cmd_timestamps, f, indent=4)
 
+
+def visualize(ee_translation):
+    """Visualize trajectory points in 3D."""
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+    
+    # Convert to numpy array if needed
+    if isinstance(ee_translation, list):
+        ee_translation = np.array(ee_translation)
+    
+    # Extract x, y, z coordinates
+    x = ee_translation[:, 0]
+    y = ee_translation[:, 1]
+    z = ee_translation[:, 2]
+
+    # Create 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot points
+    ax.scatter(x, y, z, c='r', marker='o', label='Points')
+
+    # Add axis labels
+    ax.set_xlabel('X Axis')
+    ax.set_ylabel('Y Axis')
+    ax.set_zlabel('Z Axis')
+
+    ax.set_title('3D Point Visualization')
+    ax.legend()
+    
+    # Get min/max values for each axis
+    x_min, x_max = np.min(x), np.max(x)
+    y_min, y_max = np.min(y), np.max(y)
+    z_min, z_max = np.min(z), np.max(z)
+
+    # Calculate maximum range
+    max_range = max(x_max - x_min, y_max - y_min, z_max - z_min)
+
+    # Calculate axis centers
+    x_center = (x_max + x_min) / 2
+    y_center = (y_max + y_min) / 2
+    z_center = (z_max + z_min) / 2
+
+    # Set axis ranges for equal scaling
+    ax.set_xlim([x_center - max_range / 2, x_center + max_range / 2])
+    ax.set_ylim([y_center - max_range / 2, y_center + max_range / 2])
+    ax.set_zlim([z_center - max_range / 2, z_center + max_range / 2])
+    plt.show()
+
+
 def simple_linear_motion(joint_state, target_joints, num_steps=20):
     """Simple linear interpolation between joint configurations."""
     joint_state = np.array(joint_state)
@@ -146,43 +198,104 @@ def simple_linear_motion(joint_state, target_joints, num_steps=20):
     
     return trajectory
 
-def generate_cmd(robot_data, args, joint_state, ee_translation, ee_quaternion, z_proj):
-    """Generate command trajectory using PyRoKi instead of CuRobo."""
-    robot, robot_coll, world_coll = robot_data
+def generate_pushing_trajectory(
+    robot,
+    joint_state: np.ndarray,
+    ee_translation: np.ndarray, 
+    ee_quaternion: np.ndarray,
+    push_direction: np.ndarray,
+    push_distance: float = 0.25,
+    num_waypoints: int = 5,
+    target_link_name: str = "panda_hand_tcp"
+) -> List[List[float]]:
+    """
+    Generate a simple pushing trajectory using batch IK with continuity.
     
-    trans_goals = []
-    rot_goals = []
-
-    X = 0.05
-    for i in range(5):
-        trans_goals.append(ee_translation + z_proj * X * i)
-        rot_goals.append(ee_quaternion)
-    new_joint_state = joint_state
-    joints_traj = []
-    ee_translation_traj = []
+    Args:
+        robot: Robot object from init_pyroki
+        joint_state: Current joint configuration [7-DOF]
+        ee_translation: Current end-effector position [x, y, z]
+        ee_quaternion: Current end-effector orientation [x, y, z, w] or [w, x, y, z]
+        push_direction: Normalized push direction vector [x, y, z]
+        push_distance: Total distance to push (default: 0.25m)
+        num_waypoints: Number of waypoints in trajectory
+        target_link_name: Name of target link for IK
+        
+    Returns:
+        List of joint configurations forming the trajectory
+    """
     
-    for i in range(0, len(trans_goals)-1):
-        result = solve_motion(
-            args,
-            new_joint_state,
-            ee_translation_goal=trans_goals[i+1],
-            ee_orientation_goal=rot_goals[i+1],
+    # Generate waypoints along push direction
+    waypoint_positions = []
+    waypoint_orientations = []
+    
+    for i in range(num_waypoints):
+        # Linear progression along push direction
+        alpha = i / (num_waypoints - 1) if num_waypoints > 1 else 0.0
+        position = ee_translation + push_direction * push_distance * alpha
+        waypoint_positions.append(position)
+        waypoint_orientations.append(ee_quaternion)
+    
+    # Convert to arrays
+    waypoint_positions = np.array(waypoint_positions)
+    waypoint_orientations = np.array(waypoint_orientations)
+    
+    # Ensure quaternions are in [w, x, y, z] format for PyRoKi
+    if waypoint_orientations.shape[-1] == 4:
+        # Check if input is [x, y, z, w] format and convert to [w, x, y, z]
+        if len(ee_quaternion) == 4 and abs(np.linalg.norm(ee_quaternion) - 1.0) < 1e-6:
+            # Assume [x, y, z, w] format, convert to [w, x, y, z]
+            wxyz_orientations = np.zeros_like(waypoint_orientations)
+            wxyz_orientations[:, 0] = waypoint_orientations[:, 3]  # w
+            wxyz_orientations[:, 1] = waypoint_orientations[:, 0]  # x
+            wxyz_orientations[:, 2] = waypoint_orientations[:, 1]  # y
+            wxyz_orientations[:, 3] = waypoint_orientations[:, 2]  # z
+            waypoint_orientations = wxyz_orientations
+    
+    try:
+        # Solve batch IK with continuity
+        joint_solutions = solve_batch_ik_with_continuity(
             robot=robot,
-            robot_coll=robot_coll,
-            world_coll=world_coll
+            target_link_name=target_link_name,
+            target_wxyz_sequence=waypoint_orientations,
+            target_position_sequence=waypoint_positions,
+            initial_guess=joint_state
         )
         
-        if result is not None:
-            j_traj, ee_traj, new_joint_state = result
-            joints_traj += j_traj
-            ee_translation_traj += ee_traj
-        else:
-            cprint(f"Motion planning failed for goal {i+1}", "red")
-            break
+        # Convert to list format
+        trajectory = []
+        for joint_config in joint_solutions:
+            trajectory.append(joint_config.tolist())
+            
+        cprint(f"Generated {len(trajectory)} waypoints using batch IK", "green")
+        return trajectory
+        
+    except Exception as e:
+        cprint(f"Batch IK failed: {e}, using fallback linear interpolation", "yellow")
+        raise ValueError("Batch IK failed") from e
 
-    joints_traj = joints_traj[::40]
-    cprint(f"len of cmd: {len(joints_traj)}", "green")
-    return joints_traj
+
+def generate_cmd(robot, joint_state, ee_translation, ee_quaternion, z_proj):
+    """Generate command trajectory using simplified pushing pattern generator."""
+    try:
+        # Use the new simplified trajectory generator
+        joints_traj = generate_pushing_trajectory(
+            robot=robot,
+            joint_state=joint_state,
+            ee_translation=ee_translation,
+            ee_quaternion=ee_quaternion,
+            push_direction=z_proj,
+            num_waypoints=1000,
+            push_distance=0.1,
+        )
+        
+        cprint(f"Generated trajectory with {len(joints_traj)} waypoints", "green")
+        return joints_traj
+        
+    except Exception as e:
+        cprint(f"Trajectory generation failed: {e}, using fallback", "red")
+        # Fallback: just return current position repeated
+        return [joint_state.tolist()] * 20
 
 def get_index(args):
     os.makedirs(args.save_dir, exist_ok = True)
@@ -197,8 +310,9 @@ def get_index(args):
 if __name__ == '__main__':
     args = tyro.cli(Args, description='Pushing with Franka using PyRoKi and RealsenseAPI')
 
-    # Initialize PyRoKi
-    robot_data = init_pyroki(args)
+    urdf = yourdfpy.URDF.load(args.urdf)
+    robot = pk.Robot.from_urdf(urdf)
+    
     cprint("PyRoKi initialized successfully", "green")
     
     # Initialize camera using RealsenseAPI
@@ -259,7 +373,7 @@ if __name__ == '__main__':
         z_proj = z_proj / np.linalg.norm(z_proj)
         print(f"projection of z axis of ee on XoY plain {z_proj}")
         
-        joints_traj = generate_cmd(robot_data, args, joint_state, ee_translation, ee_quaternion, z_proj)
+        joints_traj = generate_cmd(robot, joint_state, ee_translation, ee_quaternion, z_proj)
         input("Press enter to start moving")
         
         timestamps = []

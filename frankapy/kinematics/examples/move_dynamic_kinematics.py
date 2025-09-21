@@ -2,7 +2,7 @@ import numpy as np
 from autolab_core import RigidTransform
 from frankapy import FrankaArm
 from kinematics.frankapy_utils import IKSolver, DynamicJointTrajectoryPublisher, generate_pose_trajectory
-
+from kinematics import PANDA_URDF_PATH
 import rospy
 
 
@@ -11,8 +11,8 @@ def execute_dynamic_trajectory(fa, pose_traj, T, dt):
     rospy.loginfo('Executing dynamic trajectory with real-time IK solving')
     
     # Initialize IK solver and trajectory publisher
-    ik_solver = IKSolver(urdf_path="./assets/panda/panda_v3.urdf",
-                         target_link_name="panda_hand_tcp")
+    ik_solver = IKSolver(urdf_path = PANDA_URDF_PATH,
+                         target_link_name = "panda_hand_tcp")
     traj_publisher = DynamicJointTrajectoryPublisher()
     
     # Get current joint state and solve first pose

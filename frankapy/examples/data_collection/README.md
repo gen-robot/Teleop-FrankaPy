@@ -21,6 +21,9 @@ pip install -e .
 ```
 
 ### Use this command for data collection
+
+If you would like to use kinematics, you should follow [Kinematics doc](../../kinematics/README.md)
+
 ```bash 
 # Use ee pose impedance control in libfranka 
 python -m examples.data_collection.data_collection --min_action_steps 50 --max_action_steps 1000 --instruction test --task_name bingwen  --episode_idx 1
