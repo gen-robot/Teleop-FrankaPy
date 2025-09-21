@@ -31,6 +31,18 @@ def safe_remove(path: str):
     if os.path.isfile(path):
         os.remove(path)
 
+
+def get_dir_size(path: str) -> int:
+    """Calculates the total size of a directory in bytes."""
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if not os.path.islink(fp):
+                total_size += os.path.getsize(fp)
+    return total_size
+
+
 def check_and_download_assets(robot_name: str = "panda", assets_base_dir: str = os.path.join(FRANKAPY_PATH, "assets")):
     """
     Check and download the assets directory for the specified robot.
@@ -50,10 +62,18 @@ def check_and_download_assets(robot_name: str = "panda", assets_base_dir: str = 
     tmp_zip_path = os.path.join(tmp_dir, f"{robot_name}.zip")
     tmp_extract_dir = os.path.join(tmp_dir, f"{robot_name}")
 
-    # Step 1: Check if target directory already exists
+    # Step 1: Check if target directory already exists and is valid
     if os.path.isdir(assets_target_dir):
-        print(f"[✓] Directory found: {assets_target_dir}")
-        return assets_target_dir
+        dir_size_bytes = get_dir_size(assets_target_dir)
+        # Check if size is greater than 1 MB (1 * 1024 * 1024 bytes)
+        if dir_size_bytes > 1048576 and os.path.isfile(os.path.join(assets_target_dir, "panda_v3.urdf")):
+            dir_size_mb = dir_size_bytes / (1024 * 1024)
+            print(f"[✓] Directory found and seems valid (size: {dir_size_mb:.2f} MB): {assets_target_dir}")
+            return assets_target_dir
+        else:
+            dir_size_mb = dir_size_bytes / (1024 * 1024)
+            print(f"[!] Directory found but seems incomplete (size: {dir_size_mb:.2f} MB). Deleting and re-downloading.")
+            safe_rmtree(assets_target_dir)
 
     # Ensure base directory exists
     os.makedirs(assets_base_dir, exist_ok=True)
