@@ -6,13 +6,13 @@ import tyro
 import rospy
 import yourdfpy
 import threading
+import transforms3d
 import numpy as np
 import pyroki as pk
 from tqdm import tqdm
 from typing import Optional, List
 from termcolor import cprint
 from dataclasses import dataclass
-from scipy.spatial.transform import Rotation as R
 from physics_datagen.ros_toolkit import Ros_listener, run_publisher
 
 # Import RealsenseAPI wrapper
@@ -23,13 +23,24 @@ from frankapy.proto import JointPositionSensorMessage
 from franka_interface_msgs.msg import SensorDataGroup
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from kinematics.solution.solve_ik import solve_batch_ik_with_continuity
+from kinematics import PANDA_URDF_PATH
+
+
+CandidateInitPose = [
+    [-0.35471786,  0.67136656, -0.12932039, -1.96341863,  0.79877985,  2.14604293,  1.27579102],
+    [-1.12162436,  0.99415506,  0.60818567, -1.74134301,  0.3579409,   1.95144463,  1.53270908],
+]
+
+K_GAINS = FC.DEFAULT_K_GAINS
+D_GAINS = FC.DEFAULT_D_GAINS
+
 
 @dataclass
 class Args:
     """Arguments for object data generation with PyRoKi and RealsenseAPI."""
     
     # Required arguments
-    save_dir: str = "/tmp/franka_data"
+    save_dir: str = ".tmp_data"
     """Directory to save the collected data"""
     
     # Optional arguments with defaults
@@ -45,31 +56,18 @@ class Args:
     cam_fps: int = 30
     """Camera frame rate"""
     
-    urdf: Optional[str] = None
+    cam_index: int = 0
+    """Camera index (for multi-camera setups)"""
+    
+    urdf: Optional[str] = PANDA_URDF_PATH
     """Path to robot URDF file (optional, will use default if not provided)"""
-    
-    debug: int = 0
-    """Debug level: 0 (minimal), 1 (normal), 2 (verbose)"""
-    
-    cam_height: int = 720
-    """Camera height in pixels"""
-    
-    cam_fps: int = 30
-    """Camera frames per second"""
 
-
-stop_event = threading.Event()
-K_GAINS = FC.DEFAULT_K_GAINS
-D_GAINS = FC.DEFAULT_D_GAINS
-CandidateInitPose = [
-    [-0.35471786,  0.67136656, -0.12932039, -1.96341863,  0.79877985,  2.14604293,  1.27579102],
-    [-1.12162436,  0.99415506,  0.60818567, -1.74134301,  0.3579409,   1.95144463,  1.53270908],
-]
 
 def init_realsense_api(height=720, width=1280, fps=30):
     """Initialize RealsenseAPI with specified parameters."""
     camera_api = RealsenseAPI(height=height, width=width, fps=fps, warm_start=60)
     return camera_api
+
 
 def print_camera_info(camera_api: RealsenseAPI):
     """Print camera information and parameters."""
@@ -79,6 +77,7 @@ def print_camera_info(camera_api: RealsenseAPI):
     params = camera_api.get_all_cameras_params()
     for cam_id, cam_params in params.items():
         cprint(f"{cam_id} parameters: {cam_params}", "cyan")
+
 
 def control_thread(fa, joint_state, joints_traj, init_time, dir_name):
     joints_cmd = []
@@ -139,7 +138,6 @@ def control_thread(fa, joint_state, joints_traj, init_time, dir_name):
 def visualize(ee_translation):
     """Visualize trajectory points in 3D."""
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
     
     # Convert to numpy array if needed
     if isinstance(ee_translation, list):
@@ -185,19 +183,6 @@ def visualize(ee_translation):
     plt.show()
 
 
-def simple_linear_motion(joint_state, target_joints, num_steps=20):
-    """Simple linear interpolation between joint configurations."""
-    joint_state = np.array(joint_state)
-    target_joints = np.array(target_joints)
-    
-    trajectory = []
-    for i in range(num_steps + 1):
-        alpha = i / num_steps
-        interp_joints = joint_state + alpha * (target_joints - joint_state)
-        trajectory.append(interp_joints.tolist())
-    
-    return trajectory
-
 def generate_pushing_trajectory(
     robot,
     joint_state: np.ndarray,
@@ -215,7 +200,7 @@ def generate_pushing_trajectory(
         robot: Robot object from init_pyroki
         joint_state: Current joint configuration [7-DOF]
         ee_translation: Current end-effector position [x, y, z]
-        ee_quaternion: Current end-effector orientation [x, y, z, w] or [w, x, y, z]
+        ee_quaternion: Current end-effector orientation in [w, x, y, z] format
         push_direction: Normalized push direction vector [x, y, z]
         push_distance: Total distance to push (default: 0.25m)
         num_waypoints: Number of waypoints in trajectory
@@ -239,18 +224,6 @@ def generate_pushing_trajectory(
     # Convert to arrays
     waypoint_positions = np.array(waypoint_positions)
     waypoint_orientations = np.array(waypoint_orientations)
-    
-    # Ensure quaternions are in [w, x, y, z] format for PyRoKi
-    if waypoint_orientations.shape[-1] == 4:
-        # Check if input is [x, y, z, w] format and convert to [w, x, y, z]
-        if len(ee_quaternion) == 4 and abs(np.linalg.norm(ee_quaternion) - 1.0) < 1e-6:
-            # Assume [x, y, z, w] format, convert to [w, x, y, z]
-            wxyz_orientations = np.zeros_like(waypoint_orientations)
-            wxyz_orientations[:, 0] = waypoint_orientations[:, 3]  # w
-            wxyz_orientations[:, 1] = waypoint_orientations[:, 0]  # x
-            wxyz_orientations[:, 2] = waypoint_orientations[:, 1]  # y
-            wxyz_orientations[:, 3] = waypoint_orientations[:, 2]  # z
-            waypoint_orientations = wxyz_orientations
     
     try:
         # Solve batch IK with continuity
@@ -297,45 +270,41 @@ def generate_cmd(robot, joint_state, ee_translation, ee_quaternion, z_proj):
         # Fallback: just return current position repeated
         return [joint_state.tolist()] * 20
 
+
 def get_index(args):
     os.makedirs(args.save_dir, exist_ok = True)
     all_entries = os.listdir(args.save_dir)
     all_entries.sort()
     if len(all_entries) >= 1:
-        cnt = int(all_entries[-1].split("_")[-1]) + 1
+        index = int(all_entries[-1].split("_")[-1]) + 1
     else: 
-        cnt = 0
-    return cnt
+        index = 0
+    return index
+
 
 if __name__ == '__main__':
+    
     args = tyro.cli(Args, description='Pushing with Franka using PyRoKi and RealsenseAPI')
-
     urdf = yourdfpy.URDF.load(args.urdf)
-    robot = pk.Robot.from_urdf(urdf)
-    
-    cprint("PyRoKi initialized successfully", "green")
-    
+    robot = pk.Robot.from_urdf(urdf)    
     # Initialize camera using RealsenseAPI
     camera_api = init_realsense_api(height=args.cam_height, width=args.cam_width, fps=args.cam_fps)
     cprint(f"Camera initialized with RealsenseAPI: {args.cam_width}x{args.cam_height}@{args.cam_fps}fps", "green")
-    
-    # Print camera information
     print_camera_info(camera_api)
-    
-    cnt = get_index(args)
-    
     fa = FrankaArm()
-    publisher = threading.Thread(target=run_publisher, args=(fa, ))
+    publisher = threading.Thread(target=run_publisher, args=(fa,))
     publisher.start()
     ros_listener = Ros_listener()
-    INIT_POSE = CandidateInitPose[1]
+    
+    # log
     init_info = {
-        "init_pose": INIT_POSE,
+        "init_pose": CandidateInitPose[1],
         "k_gains": K_GAINS,
         "d_gains": D_GAINS,
     }
-
-    for idx in range(cnt, args.length + 1):
+    
+    init_cnt = get_index(args)
+    for idx in range(init_cnt, args.length + 1):
         dir_name = os.path.join(args.save_dir, f"traj_{idx:05d}")
         depth_dir = os.path.join(dir_name, "depth")
         color_dir = os.path.join(dir_name, "rgb")
@@ -350,18 +319,19 @@ if __name__ == '__main__':
         cprint("="*60, "cyan")
         cprint(f"Recording traj {idx} to {dir_name}", "cyan")
         cprint("reset franka", "green")
+        
         try:
             fa.stop_skill()
         except:
             raise EnvironmentError
-        fa.goto_joints(INIT_POSE, ignore_virtual_walls=True)
+
+        fa.goto_joints(init_info['init_pose'], ignore_virtual_walls=True)
         fa.close_gripper()
         
         joint_state = fa.get_joints().astype('float32')
         ee_translation = fa.get_pose().translation.astype('float32')
         ee_quaternion = fa.get_pose().quaternion.astype('float32')
-        rotation = R.from_quat([ee_quaternion[3], ee_quaternion[0], ee_quaternion[1], ee_quaternion[2]])
-        rotation_matrix = rotation.as_matrix()
+        rotation_matrix = transforms3d.quaternions.quat2mat(ee_quaternion) # need to be quat_wxyz
         
         print("ee_translation: ", ee_translation)
         print("ee_quaternion: ", ee_quaternion)
@@ -381,9 +351,7 @@ if __name__ == '__main__':
         # Get camera intrinsics using RealsenseAPI
         intrinsics_dict = camera_api.get_intrinsics_dict()
         # Get the first camera's intrinsics (assuming single camera setup)
-        # TODO here to control id
-        first_camera_id = list(intrinsics_dict.keys())[0]
-        color_intrinsics = intrinsics_dict[first_camera_id]
+        color_intrinsics = intrinsics_dict[list(intrinsics_dict.keys())[args.cam_index]]
         
         cam_K = np.array([
             [color_intrinsics['fx'], 0, color_intrinsics['ppx']],
@@ -411,13 +379,12 @@ if __name__ == '__main__':
         color_images = []
         for i in range(90):
             try:
-                camera_id = 0
                 # Using RealsenseAPI
                 rgbd_data = camera_api.get_rgbd()
                 # Get the camera_id camera's data (shape: [n_cams, height, width, RGBD])
                 if len(rgbd_data.shape) == 4 and rgbd_data.shape[0] > 0:
-                    color_image = rgbd_data[camera_id, :, :, :3].astype(np.uint8)  # RGB
-                    depth_image = rgbd_data[camera_id, :, :, 3].astype(np.uint16)  # Depth
+                    color_image = rgbd_data[args.cam_index, :, :, :3].astype(np.uint8)  # RGB
+                    depth_image = rgbd_data[args.cam_index, :, :, 3].astype(np.uint16)  # Depth
                     
                     # Convert to the expected format
                     # RealsenseAPI returns RGB format, but we need BGR for opencv
@@ -466,5 +433,4 @@ if __name__ == '__main__':
     camera_api.close()
     cprint("Camera resources cleaned up", "green")
 
-    stop_event.set()
     publisher.join()

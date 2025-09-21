@@ -64,7 +64,7 @@ def check_and_download_assets(robot_name: str = "panda", assets_base_dir: str = 
         raise ValueError(f"Unknown robot '{robot_name}', please add the corresponding download URL in ROBOT_URLS")
 
     assets_target_dir = os.path.join(assets_base_dir, robot_name)
-    tmp_dir = "./tmp"
+    tmp_dir = "./tmp_assets"
     tmp_zip_path = os.path.join(tmp_dir, f"{robot_name}.zip")
     tmp_extract_dir = os.path.join(tmp_dir, f"{robot_name}")
 
