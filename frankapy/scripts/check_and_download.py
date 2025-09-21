@@ -16,6 +16,12 @@ ROBOT_URLS = {
     "cobot": "example",
 }
 
+ROBOT_CHECK_FILES = {
+    "panda": "panda_v3.urdf",
+    "cobot": "cobot.urdf",
+}
+
+
 @dataclass
 class Args():
     robot_name: str
@@ -66,7 +72,7 @@ def check_and_download_assets(robot_name: str = "panda", assets_base_dir: str = 
     if os.path.isdir(assets_target_dir):
         dir_size_bytes = get_dir_size(assets_target_dir)
         # Check if size is greater than 1 MB (1 * 1024 * 1024 bytes)
-        if dir_size_bytes > 1048576 and os.path.isfile(os.path.join(assets_target_dir, "panda_v3.urdf")):
+        if dir_size_bytes > 1048576 and os.path.isfile(os.path.join(assets_target_dir, ROBOT_CHECK_FILES[robot_name])):
             dir_size_mb = dir_size_bytes / (1024 * 1024)
             print(f"[✓] Directory found and seems valid (size: {dir_size_mb:.2f} MB): {assets_target_dir}")
             return assets_target_dir
