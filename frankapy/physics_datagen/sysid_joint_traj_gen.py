@@ -14,9 +14,8 @@ from frankapy import FrankaArm, SensorDataMessageType
 from frankapy import FrankaConstants as FC
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
-
-from utils import get_traj, plot_trajectory
-from robot_constants import TEST_JOINT_RANGE, REAL_K_GAINS, REAL_D_GAINS, INIT_GOAL_POSE, REAL_FRANKA_JOINT_LIMITS
+from physics_datagen.utils import get_traj, plot_trajectory
+from physics_datagen.robot_constants import TEST_JOINT_RANGE, REAL_K_GAINS, REAL_D_GAINS, INIT_GOAL_POSE, REAL_FRANKA_JOINT_LIMITS
 
 @dataclass
 class Args:

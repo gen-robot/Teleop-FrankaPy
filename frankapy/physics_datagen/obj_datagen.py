@@ -22,6 +22,7 @@ from frankapy import FrankaConstants as FC
 from frankapy.proto import JointPositionSensorMessage
 from franka_interface_msgs.msg import SensorDataGroup
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
+from physics_datagen.robot_constants import REAL_K_GAINS, REAL_D_GAINS
 from kinematics.solution.solve_ik import solve_batch_ik_with_continuity
 from kinematics import PANDA_URDF_PATH
 
@@ -31,9 +32,8 @@ CandidateInitPose = [
     [-1.12162436,  0.99415506,  0.60818567, -1.74134301,  0.3579409,   1.95144463,  1.53270908],
 ]
 
-K_GAINS = FC.DEFAULT_K_GAINS
-D_GAINS = FC.DEFAULT_D_GAINS
-
+K_GAINS = REAL_K_GAINS
+D_GAINS = REAL_D_GAINS
 
 @dataclass
 class Args:

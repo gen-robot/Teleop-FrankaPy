@@ -20,7 +20,7 @@ setup(name='frankapy',
       author='Kevin Zhang, Mohit Sharma, Jacky Liang, Oliver Kroemer',
       author_email='',
       package_dir = {'': '.'},
-      packages=['frankapy', 'kinematics','examples', ],
+      packages=['frankapy', 'kinematics', 'examples', 'physics_datagen', ],
       install_requires = requirements,
       extras_require = {}
      )
