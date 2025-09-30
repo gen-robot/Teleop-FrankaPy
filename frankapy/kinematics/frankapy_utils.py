@@ -20,7 +20,12 @@ class IKSolver:
     def __init__(self, urdf_path, target_link_name="panda_hand_tcp", init_joints_cfg=None):
         self.urdf_path = urdf_path
         self.target_link_name = target_link_name
-        self.urdf = yourdfpy.URDF.load(urdf_path)
+        try:
+            self.urdf = yourdfpy.URDF.load(urdf_path)
+        except Exception as e:
+            rospy.logerr(f'Error loading URDF: {e}')
+            rospy.logerr('You should python frankapy/scripts/check_and_download.py --robot_name "panda" or refer to README.md for more details')
+            raise e
         self.robot = pk.Robot.from_urdf(self.urdf, default_joint_cfg=init_joints_cfg)
         rospy.loginfo(f'IK Solver initialized with URDF: {urdf_path}')
     
