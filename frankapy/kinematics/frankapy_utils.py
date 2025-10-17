@@ -39,7 +39,7 @@ class IKSolver:
         try:
             joints_state = np.concatenate([joints_state, np.array([URDF_GRIPPER_OPEN])], axis=-1)
             # joints_state = np.concatenate([self.robot.get_joints(),np.array([self.robot.get_gripper_width()/2.0])],axis=-1),
-            self.update_robot_state(joints_state)
+            # self.update_robot_state(joints_state)
             solution = pks.solve_ik(
                 robot=self.robot,
                 target_link_name=self.target_link_name,
@@ -79,7 +79,10 @@ class DynamicJointTrajectoryPublisher:
     
     def start_dynamic_execution(self, fa: FrankaArm, first_joints, total_duration, buffer_time=10):
         """Start dynamic trajectory execution with first joint position"""
-        fa.goto_joints(first_joints[:7], duration=total_duration, dynamic=True, buffer_time=buffer_time, ignore_virtual_walls=True)
+        fa.goto_joints(first_joints[:7], duration=total_duration, dynamic=True, 
+                        k_gains=[400.0, 350.0, 400.0, 400.0, 400.0, 150.0, 80.0],
+                        d_gains=[100.0, 100.0, 80.0, 80.0, 80.0, 50.0, 15.0],
+                       buffer_time=buffer_time, ignore_virtual_walls=True)
         self.init_time = rospy.Time.now().to_time()
         rospy.loginfo('Dynamic execution started')
     

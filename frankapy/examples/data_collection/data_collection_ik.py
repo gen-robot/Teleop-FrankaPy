@@ -70,6 +70,7 @@ class IKDataCollection:
         
         # Get current joint positions
         self.current_joints = self.robot.get_joints()
+        
         print(f"[INFO] Initial pose: {pose}")
         print(f"[INFO] Initial joints: {self.current_joints}")
 
@@ -99,7 +100,9 @@ class IKDataCollection:
     def collect_data(self):
         input("press enter to start collection")
         print("[INFO] Starting IK-based data collection...")
+        target_joints = None
         control_rate = rospy.Rate(self.control_frequency)
+        last_time = None 
         
         try:
             while True:
@@ -145,11 +148,15 @@ class IKDataCollection:
                         from_frame='franka_tool', 
                         to_frame='world'
                     )
-
+                  
                     # Solve IK to get target joint positions
                     try:
-                        target_joints = self.ik_solver.solve_ik(self.current_joints, target_pose)                                    
-                        target_joints = self._check_joint_continuity(self.current_joints, target_joints)
+                        if target_joints is None:
+                            target_joints = self.ik_solver.solve_ik(self.current_joints[:7], target_pose)
+                        else:
+                            last_target_joints = target_joints[:7]
+                            target_joints = self.ik_solver.solve_ik(last_target_joints[:7], target_pose)
+                            self._check_joint_continuity(last_target_joints[:7], target_joints[:7])
 
                         # Start dynamic execution on first iteration
                         # Start a new skill 
@@ -175,6 +182,11 @@ class IKDataCollection:
                         continue
 
                     timestamp = rospy.Time.now().to_time() - self.init_time
+                    if last_time == None:
+                        last_time = timestamp
+                    else: 
+                        print(f" >>>>>>>>>>>>>>>>>>> time consuming: {timestamp-last_time} s")
+                    last_time = timestamp
 
                     # Save action data (same format as data_collection.py)
                     save_action = {

@@ -77,7 +77,7 @@ def _solve_ik_jax(
             pk.costs.rest_cost(
                 joint_var,
                 initial_guess,
-                weight=1.0,
+                weight=35.0,
             )
         )
     
