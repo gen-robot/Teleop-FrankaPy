@@ -4,6 +4,7 @@ import time
 import json
 import torch
 import cv2
+import imageio
 import rospy
 import requests
 import argparse
@@ -29,6 +30,9 @@ def parse_arguments():
     parser.add_argument('--max_steps', type=int, default=500)
     parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
     parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
+    parser.add_argument('--episode_idx',type=str, required=True)
+    parser.add_argument('--chunk_size', type=int, default=16)
+
     return parser.parse_args()
 
 class VLADeploy:
@@ -42,7 +46,10 @@ class VLADeploy:
 
         # Record settings
         self.record_dir = args.record_dir
+        self.episode_idx = args.episode_idx
+        self.chunk_size = args.chunk_size
         os.makedirs(self.record_dir, exist_ok=True)
+        #os.makedirs(os.path.join(self.record_dir,self.episode_idx),exist_ok=True)
 
         self.init_xyz = None
         self.init_rotation = None
@@ -54,6 +61,7 @@ class VLADeploy:
         self.ctrl_freq = args.ctrl_freq
         self.act_url = f"http://{args.vla_server_ip}:{args.vla_server_port}/act"
         self.init_time = rospy.Time.now().to_time()
+        self.record_image = []
 
     # maybe can be used for aligning with training
     def _jpeg_mapping(self, img):
@@ -62,6 +70,8 @@ class VLADeploy:
 
     def update_observation_window(self):
         images = self.camera.get_rgb()
+        mix_image = np.concatenate([images[1], images[0]], axis=1)
+        self.record_image.append(mix_image)
         # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
         self.observation_window.append({
             'ee_pose_T': self.robot.get_pose().matrix, # np shape (4,4)
@@ -114,7 +124,7 @@ class VLADeploy:
                     if len(action.shape) == 1:
                         self.actions_list.append(action)
                     else:
-                        for idx in range(action.shape[0]):
+                        for idx in range(min(action.shape[0], self.chunk_size)):
                             self.actions_list.append(action[idx])
                 
                 action = self.actions_list.pop(0)
@@ -149,14 +159,13 @@ class VLADeploy:
                             fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
                     )
                     # rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
-                    # self.robot.publish_sensor_values(ros_pub_sensor_msg) # not move 
+                    self.robot.publish_sensor_values(ros_pub_sensor_msg) # not move 
 
                     current_gripper_width = self.robot.get_gripper_width()
                     if abs(gripper_width - current_gripper_width) > 0.01:
                         grasp = True if gripper<0.5 else False
-                        # not move 
-                        # self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=False, skill_desc="control_gripper")
-
+                        gripper_width = np.clip(gripper_width, 0.015, 0.07)
+                        self.robot.goto_gripper(gripper_width, epsilon_inner=0.06, epsilon_outer=0.06, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=True, skill_desc="control_gripper")
                 except Exception as e:
                     if e is KeyboardInterrupt:
                         self.robot.stop_skill()
@@ -177,12 +186,15 @@ class VLADeploy:
 
         self.robot.stop_skill()
         rospy.loginfo('Done')
+        video_logpath = os.path.join(self.record_dir,f"log_policy_deploy.mp4")
+        print(video_logpath)
+        imageio.mimsave(video_logpath, self.record_image, fps=self.ctrl_freq)
         print("[INFO] Reaching Max-steps, Inference loop finished.")
 
 def main():
     args = parse_arguments()
-    timestamp = time.strftime("OpenPi-%Y-%m-%d-%H-%M-%S")
-    args.record_dir = os.path.join(args.record_dir, timestamp)
+    #timestamp = time.strftime("OpenPi-%Y-%m-%d-%H-%M-%S")
+    args.record_dir = os.path.join(args.record_dir, args.episode_idx)
     os.makedirs(args.record_dir, exist_ok=True)
 
     # Save arguments and git commit
