@@ -121,5 +121,5 @@ if __name__ == "__main__":
     rgbd = cams.get_rgbd()
     rgb = cams.get_rgb()
     from PIL import Image
-    image = Image.fromarray(rgb[0].astype(np.uint8), "RGB")
+    image = Image.fromarray(rgb[1].astype(np.uint8), "RGB")
     image.save("test.jpg")

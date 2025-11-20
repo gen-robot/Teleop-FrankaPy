@@ -65,8 +65,15 @@ class OpenVLADeploy:
     def update_observation_window(self):
         images = self.camera.get_rgb()
         # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
+
+        pose = self.robot.get_pose()
+        gripper_state = self.robot.get_gripper_width()
+
         self.observation_window.append({
             'instruction': self.args.instructions,
+            'ee_pos': pose.translation,
+            'ee_quat': pose.quaternion,
+            'gripper_width': gripper_state,
             'images': images # support multi camera
         })
 
@@ -95,7 +102,7 @@ class OpenVLADeploy:
             while step < self.max_steps:
                 self.update_observation_window()
                 observation = self.observation_window[-1]
-
+                
                 if len(self.actions_list) == 0:
                     # request and inference
                     t1 = time.time()
@@ -104,6 +111,9 @@ class OpenVLADeploy:
                         json={
                             "images": observation['images'].astype(np.uint8), 
                             "instruction": observation['instruction'],
+                            "ee_pos": observation["ee_pos"],
+                            "ee_quat": observation["ee_quat"],
+                            "gripper_width": observation["gripper_width"],
                             }
                     ).json()
                     action = np.array(action)
@@ -158,7 +168,8 @@ class OpenVLADeploy:
                     current_gripper_width = self.robot.get_gripper_width()
                     if abs(gripper_width - current_gripper_width) > 0.01:
                         grasp = True if gripper<0.5 else False
-                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=True, skill_desc="control_gripper")
+                        # self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=True, skill_desc="control_gripper")
+                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, epsilon_inner=0.01, epsilon_outer=0.01, speed=0.12, block=True, skill_desc="control_gripper")
 
                 except Exception as e:
                     self.ee_pose_init()

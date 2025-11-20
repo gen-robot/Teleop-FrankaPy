@@ -25,13 +25,14 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--instructions', type=str, default="test")
     parser.add_argument('--ctrl_freq', type=float, default=5.0)
-    parser.add_argument('--record_dir', type=str, default='logs/openpi')
+    parser.add_argument('--record_dir', type=str, default='logs/openvla')
     parser.add_argument('--max_steps', type=int, default=500)
     parser.add_argument('--vla_server_ip', type=str, default='localhost', help='The IP address of the VLA server')
     parser.add_argument('--vla_server_port', type=int, default=9876, help='The port of the VLA server')
+    parser.add_argument('--use_abs', default=False, action='store_true', help='Use absolute position and orientation instead of deltas')
     return parser.parse_args()
 
-class VLADeploy:
+class OpenVLADeploy:
     def __init__(self, args):
         self.args = args
         self.observation_window = deque(maxlen=2)
@@ -49,6 +50,7 @@ class VLADeploy:
         self.command_xyz = None
         self.command_rotation = None
         self.actions_list = []
+        self.use_abs = args.use_abs
 
         self.max_steps = args.max_steps
         self.ctrl_freq = args.ctrl_freq
@@ -63,12 +65,16 @@ class VLADeploy:
     def update_observation_window(self):
         images = self.camera.get_rgb()
         # image = self.camera.get_rgb()[0] # get first camera rgb image, shape(height, width ,3)
+
+        pose = self.robot.get_pose()
+        gripper_state = self.robot.get_gripper_width()
+
         self.observation_window.append({
-            'ee_pose_T': self.robot.get_pose().matrix, # np shape (4,4)
-            'joints': self.robot.get_joints(), # np shape (7,)
-            'gripper_width': np.array([self.robot.get_gripper_width()]), # np shape(1,)
-            'instruction': self.args.instructions, # string
-            'images': images.astype(np.uint8) # support multi camera
+            'instruction': self.args.instructions,
+            'ee_pos': pose.translation,
+            'ee_quat': pose.quaternion,
+            'gripper_width': gripper_state,
+            'images': images # support multi camera
         })
 
     def ee_pose_init(self):
@@ -91,28 +97,27 @@ class VLADeploy:
         step = 0
         self.ee_pose_init()
         control_rate = rospy.Rate(self.ctrl_freq)
+        grasp = False
         print("[INFO] Starting inference loop...")
         try:
             while step < self.max_steps:
                 self.update_observation_window()
                 observation = self.observation_window[-1]
-
+                
                 if len(self.actions_list) == 0:
                     # request and inference
                     t1 = time.time()
                     action = requests.post(
                         self.act_url,
                         json={
-                            "ee_pose_T": observation['ee_pose_T'],
-                            "joints": observation['joints'],
-                            "gripper_width": observation['gripper_width'],
-                            "images": observation['images'], 
+                            "images": observation['images'].astype(np.uint8), 
                             "instruction": observation['instruction'],
+                            "ee_pos": observation["ee_pos"],
+                            "ee_quat": observation["ee_quat"],
+                            "gripper_width": observation["gripper_width"],
                             }
                     ).json()
-                    action = np.array(action['actions'])
-                    action = action[:8]
-                    
+                    action = np.array(action)
                     if len(action.shape) == 1:
                         self.actions_list.append(action)
                     else:
@@ -125,11 +130,19 @@ class VLADeploy:
                 print("request and inference time cost", time.time() - t1, "| action.shape", action.shape)
 
                 timestamp = rospy.Time.now().to_time()-self.init_time
-                delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
-                delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
-                # Compute target pose
-                self.command_xyz += delta_xyz
-                self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+                if not self.use_abs:
+                    delta_xyz, delta_euler, gripper = action[:3], action[3:6], action[-1] # need to check
+                    delta_rotation = euler2mat(delta_euler[0], delta_euler[1], delta_euler[2],'sxyz')
+                    # Compute target pose
+                    self.command_xyz += delta_xyz
+                    self.command_rotation = np.matmul(self.command_rotation, delta_rotation)
+                else:
+                    abs_xyz, abs_euler, gripper = action[:3], action[3:6], action[-1]
+                    abs_rotation = euler2mat(abs_euler[0], abs_euler[1], abs_euler[2],'sxyz')
+                    # Compute target pose
+                    self.command_xyz = abs_xyz
+                    self.command_rotation = abs_rotation
+                
                 try:
                     self.command_transform = RigidTransform(rotation=self.command_rotation, translation=self.command_xyz, from_frame='franka_tool', to_frame='world')
                     gripper_width = FC.GRIPPER_WIDTH_MAX * gripper
@@ -151,19 +164,19 @@ class VLADeploy:
                             fb_ctrlr_proto, SensorDataMessageType.CARTESIAN_IMPEDANCE)
                     )
                     # rospy.loginfo(f'Publishing: Steps {step+1}, delta_xyz = {delta_xyz}')
-                    self.robot.publish_sensor_values(ros_pub_sensor_msg) # not move 
+                    self.robot.publish_sensor_values(ros_pub_sensor_msg)
 
                     current_gripper_width = self.robot.get_gripper_width()
+
                     if abs(gripper_width - current_gripper_width) > 0.01:
+                        prev_grasp = grasp
                         grasp = True if gripper<0.5 else False
-                        # not move 
-                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=True, skill_desc="control_gripper")
+                        # self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, speed=0.12, block=True, skill_desc="control_gripper")
+                        block = (not prev_grasp) and grasp
+                        print(block)
+                        self.robot.goto_gripper(gripper_width, grasp=grasp, force=FC.GRIPPER_MAX_FORCE/3.0, epsilon_inner=0.01, epsilon_outer=0.01, speed=0.12, block=block, skill_desc="control_gripper")
 
                 except Exception as e:
-                    if e is KeyboardInterrupt:
-                        self.robot.stop_skill()
-                        print(f"[WARN] Keyboard Interp : {e}")
-                        break
                     self.ee_pose_init()
                     control_rate.sleep()
                     print(f"[WARN] Move failed? : {e}")
@@ -173,7 +186,7 @@ class VLADeploy:
                 step += 1
                 control_rate.sleep()
         except Exception as e:
-            self.robot.stop_skill()
+            self.ee_pose_init()
             control_rate.sleep()
             print(f"[WARN] Keyboard Interp : {e}")
 
@@ -183,7 +196,7 @@ class VLADeploy:
 
 def main():
     args = parse_arguments()
-    timestamp = time.strftime("OpenPi-%Y-%m-%d-%H-%M-%S")
+    timestamp = time.strftime("OpenVLA-%Y-%m-%d-%H-%M-%S")
     args.record_dir = os.path.join(args.record_dir, timestamp)
     os.makedirs(args.record_dir, exist_ok=True)
 
@@ -192,7 +205,7 @@ def main():
         json.dump(vars(args), f, indent=4)
     os.system(f'git rev-parse HEAD > {os.path.join(args.record_dir, "git_commit.txt")}')
 
-    agent = VLADeploy(args)
+    agent = OpenVLADeploy(args)
     agent.robot_init()
     agent.run_inference_loop()
 

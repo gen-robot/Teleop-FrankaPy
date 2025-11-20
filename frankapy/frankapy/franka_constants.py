@@ -28,6 +28,8 @@ class FrankaConstants:
         ]), translation=np.array([0.3069, 0, 0.4067]),
         from_frame='franka_tool', to_frame='world')
 
+    # HOME_JOINTS = [0, -0.85, 0, -2.8, 0, 2.1, 0.785]
+    # HOME_JOINTS = [-3.417e-05, 2.5908e-01, 3.61985e-04, -2.28957e+00, 4.16992e-04, 2.51445e+00, 7.85206e-01]
     HOME_JOINTS = [0, 0.259, 0, -2.289, 0, 2.515, math.pi / 4]
     # HOME_JOINTS = [0.1, 0.2, 0.3, -2.4, 0.9, 2.8, math.pi / 2]
 
