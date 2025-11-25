@@ -1,7 +1,8 @@
 import numpy as np
 import pyrealsense2 as rs
 from collections import OrderedDict
-
+import os
+import argparse
 
 class RealsenseAPI:
     """Wrapper that implements boilerplate code for RealSense cameras"""
@@ -276,6 +277,9 @@ class RealsenseAPI:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--idx',type=str,required=True)
+    args = parser.parse_args()
     cams = RealsenseAPI()
 
     print(f"Num cameras: {cams.get_num_cameras()}")
@@ -289,10 +293,26 @@ if __name__ == "__main__":
     #     key_params = cams.get_key_camera_params(0)
     #     print("Camera 0 key params:", key_params)
     
+    intrinsics_list = cams.get_intrinsics()
+    print("\n[1] Intrinsics list returned by get_intrinsics() (rs.intrinsics objects):")
+    print(intrinsics_list)
+    print("\n[2] Detailed parameters for each camera:")
+    for cam_idx, intrinsics in enumerate(intrinsics_list):
+        print(f"\nIntrinsics for camera {cam_idx + 1}")
+        print(f"Resolution (width x height): {intrinsics.width}x{intrinsics.height}")
+        print(f"Focal length fx: {intrinsics.fx:.6f}")
+        print(f"Focal length fy: {intrinsics.fy:.6f}")
+        print(f"Principal point ppx: {intrinsics.ppx:.6f}")
+        print(f"Principal point ppy: {intrinsics.ppy:.6f}")
+        print(f"Distortion model: {intrinsics.model.name}")
+        print(f"Distortion coefficients: {[round(c,6) for c in intrinsics.coeffs]}")
+
     rgbd = cams.get_rgbd()
     rgb = cams.get_rgb()
     from PIL import Image
-    image = Image.fromarray(rgb[1].astype(np.uint8)) # ,"RGB"
-    image.save("test.jpg")
+    image = Image.fromarray(rgb[0].astype(np.uint8)) # ,"RGB"
+    out_dir = f"pick_place_dice_evalpoints"
+    os.makedirs(out_dir,exist_ok=True)
+    image.save(f"{out_dir}/{args.idx}.jpg")
     
     cams.close()

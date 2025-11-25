@@ -4,3 +4,9 @@ logs/
 .vscode/
 camera_captures
 frankapy/assets/*
+visual_datagen
+frankapy/kinematics/assets* 
+singlecam_chunk*
+test*
+deploy_logs*
+output*

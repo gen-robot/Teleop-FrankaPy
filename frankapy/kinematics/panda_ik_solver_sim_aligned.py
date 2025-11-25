@@ -166,7 +166,7 @@ class SimAlignedPandaIKSolver:
         # Create Pinocchio model
         self.pmodel = PinocchioModel(
             self.urdf_str.decode('utf-8'),
-            gravity=np.array([0, 0, -9.81])
+            np.array([0, 0, -9.81]).reshape(3, 1)
         )
         
         
@@ -439,7 +439,7 @@ if __name__ == "__main__":
     # 1. Initialize solver
     urdf_path = os.path.join(
         os.path.dirname(__file__),
-        "../mani_skill/assets/robots/panda/panda_v3.urdf"
+        "../assets/panda/panda_v3.urdf"
     )
     
     if not os.path.exists(urdf_path):

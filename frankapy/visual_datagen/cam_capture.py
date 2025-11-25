@@ -10,7 +10,7 @@ import argparse
 parser = argparse.ArgumentParser(description="Capture RGB and Depth frames using Intel RealSense.")
 parser.add_argument("--dir_name", type=str, default="data", help="Directory to save captured frames.")
 parser.add_argument("--preheat_time", type=int, default=5, help="Preheat time(s) in seconds before starting to save frames.")
-parser.add_argument("--fps", type=int, default=15, help="Frames per second for the camera.")
+parser.add_argument("--fps", type=int, default=30, help="Frames per second for the camera.")
 parser.add_argument("--record_frames", type=int, default=150, help="Number of frames to capture before stopping.")
 args = parser.parse_args()
 

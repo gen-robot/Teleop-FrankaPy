@@ -1,7 +1,7 @@
 export DIR_NAME="records/franka-track"
 export PREHEAT_TIME=5
 export RECORD_FRAMES=10
-export FPS=15
+export FPS=30
 export PROJECT_ROOT=$(pwd)
 
 python3 visual_datagen/cam_capture.py \

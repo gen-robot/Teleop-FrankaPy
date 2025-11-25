@@ -20,7 +20,6 @@ from realsense_wrapper.realsense_d435 import RealsenseAPI
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.franka_constants import FrankaConstants as FC
 from frankapy.proto import PosePositionSensorMessage, CartesianImpedanceSensorMessage
-json_numpy.patch()
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -56,6 +55,7 @@ class VLADeploy:
         self.command_xyz = None
         self.command_rotation = None
         self.actions_list = []
+        self.actions_record_list = []
 
         self.max_steps = args.max_steps
         self.ctrl_freq = args.ctrl_freq
@@ -110,17 +110,29 @@ class VLADeploy:
                 if len(self.actions_list) == 0:
                     # request and inference
                     t1 = time.time()
-                    action = requests.post(
+
+                    payload={
+                        "ee_pose_T": observation['ee_pose_T'],
+                        "joints": observation['joints'],
+                        "gripper_width": observation['gripper_width'],
+                        "images": observation['images'], 
+                        "instruction": observation['instruction'],
+                        }
+                    payload_string = json_numpy.dumps(payload)
+
+                    response = requests.post(
                         self.act_url,
-                        json={
-                            "ee_pose_T": observation['ee_pose_T'],
-                            "joints": observation['joints'],
-                            "gripper_width": observation['gripper_width'],
-                            "images": observation['images'], 
-                            "instruction": observation['instruction'],
-                            }
-                    ).json()
-                    action = np.array(action['actions'])
+                        data=payload_string,
+                        headers={"Content-Type": "application/json"},
+                        timeout=1000,
+                    )
+
+                    if response.status_code == 200:
+                        response_data = json_numpy.loads(response.text)
+                        action = np.array(response_data['actions'])
+                    else:
+                        raise TimeoutError(" >>>>> Read response timeout <<<<< ")
+                    
                     if len(action.shape) == 1:
                         self.actions_list.append(action)
                     else:
@@ -177,6 +189,13 @@ class VLADeploy:
                     continue
 
                 print(f"[STEP {step}] delta_xyz: {delta_xyz}, delta_euler: {delta_euler}, gripper: {gripper}")
+                step_record = {
+                    "step": step,
+                    "delta_xyz": delta_xyz.tolist(),
+                    "delta_euler": delta_euler.tolist(),
+                    "gripper": gripper.tolist()
+                }
+                self.actions_record_list.append(step_record)
                 step += 1
                 control_rate.sleep()
         except Exception as e:
@@ -189,6 +208,9 @@ class VLADeploy:
         video_logpath = os.path.join(self.record_dir,f"log_policy_deploy.mp4")
         print(video_logpath)
         imageio.mimsave(video_logpath, self.record_image, fps=self.ctrl_freq)
+        actions_logpath = os.path.join(self.record_dir,f"log_policy_output.json")
+        with open(actions_logpath,'w') as f:
+            json.dump(self.actions_record_list,f,indent=4)
         print("[INFO] Reaching Max-steps, Inference loop finished.")
 
 def main():

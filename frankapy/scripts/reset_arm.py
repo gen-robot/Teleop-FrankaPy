@@ -22,4 +22,6 @@ if __name__ == '__main__':
         fa.close_gripper()
     else:
         print('Opening Grippers')
-        fa.open_gripper()
+        fa.open_gripper(block=False)
+        
+    print(fa.get_joints())
