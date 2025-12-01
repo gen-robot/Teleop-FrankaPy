@@ -200,6 +200,7 @@ class VLADeployWithIK:
         step = 0
         self.ee_pose_init()
         control_rate = rospy.Rate(self.ctrl_freq)
+        grasp = False  # Initial gripper state
         print("[INFO] Starting inference loop with IK-based joint control...")
         
         try:
@@ -307,8 +308,10 @@ class VLADeployWithIK:
                     # Control gripper
                     current_gripper_width = self.robot.get_gripper_width()
                     if abs(gripper_width - current_gripper_width) > 0.01:
+                        prev_grasp = grasp
                         grasp = True if gripper < 0.5 else False
-                        gripper_width = np.clip(gripper_width, 0.015, 0.07)
+                        block = (prev_grasp != grasp)
+                        print(f"block gripper: {block}")                        
                         self.robot.goto_gripper(
                             gripper_width, 
                             epsilon_inner=0.06, 
@@ -316,7 +319,7 @@ class VLADeployWithIK:
                             grasp=grasp, 
                             force=FC.GRIPPER_MAX_FORCE / 3.0, 
                             speed=0.12, 
-                            block=True, 
+                            block=block, 
                             skill_desc="control_gripper"
                         )
                         
